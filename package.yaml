@@ -1,0 +1,41 @@
+name:                Latte
+version:             0.1.0.0
+author:              "Piotr Karpiński"
+
+extra-source-files:
+- README.md
+
+dependencies:
+- base >= 4.7 && < 5
+- containers >= 0.6.0.1
+- array
+- mtl >= 2.2.2
+- text
+- filepath
+- process
+- text-format
+
+library:
+  source-dirs: src
+
+executables:
+  Latte-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - Latte
+
+tests:
+  Latte-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - Latte

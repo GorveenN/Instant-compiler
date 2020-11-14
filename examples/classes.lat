@@ -1,0 +1,24 @@
+class A {
+    int a;
+    int b;
+}
+
+class B extends A {
+    int c;
+    int d;
+
+    void ala(int a) {
+        int[] a = new int[20];
+        cls[] a = new cls[20];
+        cls[] b;
+        b = new cls[2];
+        cls[2] = 1;
+        ala(cls[2]);
+    }
+
+    int f;
+}
+
+int main() {
+    return null as int;
+}
