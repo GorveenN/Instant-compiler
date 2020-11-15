@@ -1,3 +1,4 @@
 module Compiler.Frontend where
 
-a = 1
+a :: String -> String
+a = id
