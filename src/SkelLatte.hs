@@ -74,6 +74,7 @@ data StaticException a = ArrayNotHomogenous a
     | RedefinitionOfSymbol a Ident
     | NoReturn a Ident
     | WrongNumebrOfArguments a Int Int
+    | NotSubclass a Ident Ident
     | MainNotDefined
 
 instance Show (StaticException (Maybe (Int, Int))) where
@@ -145,8 +146,13 @@ type Field = StaticType
 type InheritanceForest = Map.Map StaticType StaticType
 type VarMap = Map.Map Ident (StaticType, NestLvl) -- nest level
 type FunMap = Map.Map Ident Function -- function_name -> (return type, argument list, maybe class)
-type ClassMap = Map.Map Ident (Map.Map Ident Field, Map.Map Ident Function)
+type ClassMap = Map.Map Ident ClassMeta
 
+data ClassMeta = ClassMeta
+    { _fields :: Map.Map Ident Field
+    , _methods :: Map.Map Ident Function
+    , _super :: Maybe Ident
+    }
 
 lookupFail err = maybe (throwError err) return
 
@@ -158,6 +164,18 @@ failure x = Bad $ "Undefined case: " ++ show x
 -- transIdent x = case x of
 --     Ident string -> failure x
 
+-- TODO: pattern match may refuse when class is not present in env
+superclass :: Show a => StaticType -> StaticType -> ERT a Bool
+superclass _t1@(TypeCls t1) (TypeCls t2) = do
+    maybeparent <- asks (Map.lookup t2 . _classMap)
+    case maybeparent of
+        (Just ClassMeta { _super = mparent }) -> do
+            case mparent of
+                (Just parent) -> if parent == t1
+                    then return True
+                    else superclass _t1 (TypeCls parent)
+                Nothing -> return False
+        Nothing -> return False
 
 transProgram :: Show a => Program a -> Result
 transProgram x = case x of
@@ -187,8 +205,16 @@ transClassMember x = case x of
 
 
 transClassBlock :: Show a => ClassBlock a -> Result
-transClassBlock x = case x of
-    ClassBlock _ classmembers -> failure x
+transClassBlock (ClassBlock p classmembers) = do
+    let fields = filter isField classmembers
+    let methods = filter isMethod classmembers
+
+
+  where
+      isField x = case x of
+                    (ClassMethod _ _) -> True
+                    _ -> False
+      isMethod = not . isField
 
 
 transClassDef :: Show a => ClassDef a -> Result
