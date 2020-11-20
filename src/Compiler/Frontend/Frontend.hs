@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TemplateHaskell #-}
+
 module Compiler.Frontend.Frontend where
 
 import           AbsLatte
@@ -10,9 +12,13 @@ import           Compiler.Frontend.Utils
 import           Control.Monad                  ( foldM )
 import           Control.Monad.Except
 import           Control.Monad.Reader
+import           Control.Lens            hiding ( element
+                                                , Empty
+                                                )
+import           Control.Lens.TH
 import qualified Data.Map                      as Map
 
-
+$(makeLenses ''StaticEnv)
 
 lookupFail err = maybe (throwError err) return
 
@@ -100,21 +106,77 @@ transBlock x = case x of
     Block _ stmts -> failure x
 
 
-transStmt :: Show a => Stmt a -> ERT a ()
+transStmt :: Show a => Stmt a -> ERT a Bool
 transStmt x = case x of
-    Empty _                     -> return ()
-    BStmt _ block               -> failure x
-    Decl _ type_ items          -> failure x
-    Ass  _ expr1 expr2          -> failure x
-    Incr _ ident                -> failure x
-    Decr _ ident                -> failure x
-    Ret  _ expr                 -> failure x
-    VRet _                      -> failure x
-    Cond _ expr stmt            -> failure x
-    CondElse _ expr stmt1 stmt2 -> failure x
-    While _ expr stmt           -> failure x
-    For _ type_ ident expr stmt -> failure x
-    SExp _ expr                 -> failure x
+    Empty _                 -> return False
+    BStmt _ (Block p stmts) -> do
+        local (over nestLvl (+ 1)) $ transStmtList stmts
+    Decl _ type_ items -> do
+        -- TODO
+        return False
+    Ass pos expr1 expr2 -> do
+        expr1t <- transExpr expr1
+        expr2t <- transExpr expr2
+        unless (expr1t == expr2t) $ throwError $ TypeMismatch pos expr1t expr2t
+        return False
+    Incr pos ident -> do
+        throwIfWrongType (EVar pos ident) TypeInt
+        return False
+    Decr pos ident -> transStmt (Incr pos ident)
+    Ret  pos expr  -> do
+        exprType     <- transExpr expr
+        expectedType <- asks _retType
+        when (exprType /= expectedType) $ throwError $ TypeMismatch
+            pos
+            expectedType
+            exprType
+        return True
+    VRet pos -> do
+        expectedType <- asks _retType
+        unless (expectedType == TypeVoid) $ throwError $ TypeMismatch
+            pos
+            expectedType
+            TypeVoid
+        return False
+    Cond _ expr stmt -> do
+        throwIfWrongType expr TypeBool
+        transStmt stmt
+        return False
+    CondElse _ expr stmt1 stmt2 -> do
+        throwIfWrongType expr TypeBool
+        liftM2 (&&) (transStmt stmt1) (transStmt stmt2)
+    While _ expr stmt -> do
+        throwIfWrongType expr TypeBool
+        transStmt stmt
+        return False
+    For pos type_ ident expr stmt -> do
+        let itemType = transType type_
+        iterableType <- transExpr expr
+        case iterableType of
+            (TypeArr nestedType) -> do
+                unless (nestedType == itemType) $ throwError $ TypeMismatch
+                    pos
+                    itemType
+                    nestedType
+                -- TODO Add ident to env
+                lvl <- asks _nestLvl
+                local
+                    ( over nestLvl (+ 1)
+                    . over varMap (Map.insert ident (iterableType, lvl + 1))
+                    )
+                    (transStmt stmt)
+                transStmt stmt
+                return False
+            _ -> throwError $ TypeMismatch pos (TypeArr itemType) iterableType
+    SExp _ expr -> do
+        transExpr expr
+        return False
+
+transStmtList :: Show a => [Stmt a] -> ERT a Bool
+transStmtList ((Decl pos type_ items) : rest) = do
+    return False
+transStmtList (s : ss) = liftM2 (||) (transStmt s) (transStmtList ss)
+transStmtList []       = False
 
 
 transItem :: Show a => Item a -> ERT a ()
@@ -198,11 +260,11 @@ transExpr x = case x of
             <$> (   asks (Map.lookup ident . _varMap)
                 >>= lookupFail (VariableNotInScope pos ident)
                 )
-    ELitInt _ integer        -> return TypeInt
+    ELitInt _ _              -> return TypeInt
     ELitTrue  _              -> return TypeBool
     ELitFalse _              -> return TypeBool
     ENull     _              -> return TypeNull
-    EString _ string         -> return TypeStr
+    EString _ _              -> return TypeStr
     EApp pos ident arguments -> do
         (returnType, argumentsTypes) <- asks (Map.lookup ident . _funMap)
             >>= lookupFail (FunctionNotInScope pos ident)
@@ -228,13 +290,9 @@ transExpr x = case x of
     EAdd pos lhs addop rhs -> do
         lhsType <- transExpr lhs
         rhsType <- transExpr rhs
-        unless
-                (  lhsType
-                == rhsType
-                && (lhsType == TypeInt || lhsType == TypeStr)
-                )
-            $ throwError
-            $ TypeMismatch pos lhsType rhsType
+        unless (lhsType == rhsType) $ throwError $ TypeMismatch pos
+                                                                lhsType
+                                                                rhsType
         return lhsType
     ERel p lhs relop rhs -> do
         lhsType <- transExpr lhs

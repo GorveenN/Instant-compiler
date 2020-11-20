@@ -14,6 +14,7 @@ dependencies:
 - filepath
 - process
 - text-format
+- lens
 
 library:
   source-dirs: src
