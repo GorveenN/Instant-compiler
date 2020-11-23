@@ -6,15 +6,15 @@ Program.   	Program 	::= [TopDef] ;
 TopClassDef. 	TopDef 		::= ClassDef;
 TopFunDef.    	TopDef 		::= FnDef;
 
-FnDef.	   	FnDef 		::= Type Ident "(" [Arg] ")" Block ;
-Arg. 	   	Arg 		::= Type Ident;
+FnDef.	   	FnDef 		::= Type LIdent "(" [Arg] ")" Block ;
+Arg. 	   	Arg 		::= NonVoidType LIdent;
 
-ClassField.     ClassMember     ::= Type [Ident] ";"; -- switch from Type to NonVoidType causes SR conflict
+ClassField.     ClassMember     ::= Type [LIdent] ";";
 ClassMethod.    ClassMember     ::= FnDef;
 ClassBlock.     ClassBlock      ::= "{" [ClassMember] "}" ;
 
-Class.        	ClassDef 	::= "class" Ident ClassBlock ;
-ClassInh.     	ClassDef 	::= "class" Ident "extends" Ident ClassBlock ;
+Class.        	ClassDef 	::= "class" UIdent ClassBlock ;
+ClassInh.     	ClassDef 	::= "class" UIdent "extends" UIdent ClassBlock ;
 
 separator Arg "," ;
 separator nonempty TopDef "" ;
@@ -27,14 +27,14 @@ Block.     Block 	::= "{" [Stmt] "}" ;
 Empty.     Stmt 	::= ";" ;
 
 BStmt.     Stmt 	::= Block ;
-Decl.      Stmt 	::= Type [Item] ";" ;
+Decl.      Stmt 	::= NonVoidType [Item] ";" ;
 
-NoInit.    Item 	::= Ident ;
-Init.      Item 	::= Ident "=" Expr ;
+NoInit.    Item 	::= LIdent ;
+Init.      Item 	::= LIdent "=" Expr ;
 
 Ass.       Stmt 	::= Expr "=" Expr  ";" ;
-Incr.      Stmt 	::= Ident "++"  ";" ;
-Decr.      Stmt 	::= Ident "--"  ";" ;
+Incr.      Stmt 	::= LIdent "++"  ";" ;
+Decr.      Stmt 	::= LIdent "--"  ";" ;
 
 Ret.       Stmt 	::= "return" Expr ";" ;
 VRet.      Stmt 	::= "return" ";" ;
@@ -43,56 +43,47 @@ Cond.      Stmt 	::= "if" "(" Expr ")" Stmt  ;
 CondElse.  Stmt 	::= "if" "(" Expr ")" Stmt "else" Stmt  ;
 
 While.     Stmt 	::= "while" "(" Expr ")" Stmt ;
-For.       Stmt 	::= "for" "(" Type Ident ":" Expr ")" Stmt ;
+For.       Stmt 	::= "for" "(" NonVoidType LIdent ":" Expr ")" Stmt ;
 
 SExp.      Stmt 	::= Expr  ";" ;
 
 separator  Stmt "" ;
 separator nonempty Item "," ;
-separator nonempty Ident "," ;
+separator nonempty LIdent "," ;
 
 -- Types ---------------------------------------------------
 
-BCType.         ClassType       ::= Ident ;
-Int.            BType           ::= "int" ;
-Str.            BType           ::= "string" ;
-Bool.           BType           ::= "boolean" ;
+ClassType.      ScalarType      ::= UIdent ;
+Int.            ScalarType 	::= "int" ;
+Str.            ScalarType 	::= "string" ;
+Bool.           ScalarType 	::= "boolean" ;
 
-CType.          NonVoidType     ::= ClassType ;
-BType.          NonVoidType 	::= BType ;
-
-ArrayType.      Type            ::= NonVoidType "[]" ;
+ArrayType.      NonVoidType     ::= ScalarType "[]" ;
+ScalarType.     NonVoidType     ::= ScalarType ;
 NonVoidType.    Type            ::= NonVoidType ;
 Void.           Type            ::= "void" ;
 
-separator  Type "," ;
-
--- Casts -------------------------------------------------
-
-CastTypeClass.	CastType        ::=  NonVoidType ;
-CastTypeArr.	CastType        ::=  NonVoidType "[]" ;
-
 -- Expressions ---------------------------------------------
 
+ENewObject.	Expr8 	::= "new" NonVoidType ;
+ENewArray.	Expr7 	::= Expr8 "[" Expr "]" ;
 
-ENewObject.	Expr6 	::= "new" Ident  "(" ")" ;
-ENewArray.	Expr6 	::= "new" NonVoidType "[" Expr "]" ;
+EMember.	Expr6 	::= Expr6 "." LIdent ;
+EMemberCall.    Expr6 	::= Expr6 "." LIdent "(" [Expr]")"  ;
 
-EMember.	Expr6 	::= Expr6 "." Ident ;
-EMemberCall.    Expr6 	::= Expr6 "." Ident "(" [Expr]")"  ;
-
-EVar. 		Expr6 	::= Ident ;
+EVar. 		Expr6 	::= LIdent ;
 ELitInt. 	Expr6   ::= Integer ;
 ELitTrue. 	Expr6   ::= "true" ;
 ELitFalse. 	Expr6   ::= "false" ;
 ENull. 		Expr6   ::= "null" ;
 EString. 	Expr6   ::= String ;
 
-EApp. 		Expr6   ::= Ident "(" [Expr] ")" ;
+EApp. 		Expr6   ::= LIdent "(" [Expr] ")" ;
 EAccess. 	Expr6   ::= Expr6 "[" Expr "]";
 
-ECast. 		Expr5   ::= Expr5 "as" CastType;
-Neg. 		Expr5   ::= "-" Expr6 ;
+-- ECast. 		Expr5   ::= "(" ")" Expr5 "as" CastType;
+ECast. 		Expr5   ::= "(" UIdent ")" "null"  ;
+Neg.            Expr5   ::= "-" Expr6 ;
 Not. 		Expr5   ::= "!" Expr6 ;
 
 EMul. 		Expr4   ::= Expr4 MulOp Expr5 ;
@@ -102,7 +93,7 @@ ERel. 		Expr2   ::= Expr2 RelOp Expr3 ;
 EAnd. 		Expr1   ::= Expr2 "&&" Expr1 ;
 EOr. 		Expr    ::= Expr1 "||" Expr ;
 
-coercions Expr 6 ;
+coercions Expr 8 ;
 separator Expr "," ;
 
 -- operators -----------------------------------------------
@@ -125,3 +116,6 @@ NE.	RelOp   ::= "!=" ;
 comment "#" ;
 comment "//" ;
 comment "/*" "*/" ;
+
+token UIdent (upper (letter | digit | '_')*) ;
+token LIdent (lower (letter | digit | '_')*) ;
