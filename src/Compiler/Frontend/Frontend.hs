@@ -1,15 +1,15 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TemplateHaskell #-}
-
+{-# LANGUAGE FlexibleContexts #-}
 module Compiler.Frontend.Frontend where
 
-import           AbsLatte
-import           ErrM
+-- import           AbsLatte
+-- import           ErrM
 
 import           Compiler.Frontend.Types
 import           Compiler.Frontend.Utils
 
 import           Control.Monad                  ( foldM )
+import           Control.Monad.Extra            ( concatMapM )
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Lens            hiding ( element
@@ -18,358 +18,338 @@ import           Control.Lens            hiding ( element
 import           Control.Lens.TH
 import qualified Data.Map                      as Map
 
-$(makeLenses ''StaticEnv)
+import qualified Compiler.Backend.Tree         as T
 
-lookupFail err = maybe (throwError err) return
-
+import           AbsLatte
+import           ErrM
 type Result = Err String
+
 failure :: Show a => a -> Result
 failure x = Bad $ "Undefined case: " ++ show x
 
+checkIdent :: Ident -> String
+checkIdent x = case x of
+    Ident string -> string
 
--- TODO: pattern match may refuse when class is not present in env
-superclass :: Show a => StaticType -> StaticType -> ERT a Bool
-superclass _t1@(TypeCls t1) (TypeCls t2) = do
-    maybeparent <- asks (Map.lookup t2 . _classMap)
-    case maybeparent of
-        (Just ClassMeta { _super = mparent }) -> do
-            case mparent of
-                (Just parent) -> if parent == t1
-                    then return True
-                    else superclass _t1 (TypeCls parent)
-                Nothing -> return False
-        Nothing -> return False
 
-transProgram :: Show a => Program a -> Result
-transProgram x = case x of
+checkProgram :: Show a => Program a -> Result
+checkProgram x = case x of
     Program _ topdefs -> failure x
 
 
-transTopDef :: Show a => TopDef a -> Result
-transTopDef x = case x of
+checkTopDef :: Show a => TopDef a -> Result
+checkTopDef x = case x of
     TopClassDef _ classdef -> failure x
     TopFunDef   _ fndef    -> failure x
 
 
-checkFnDef :: Show a => FnDef a -> Result
+checkFnDef :: Show a => FnDef a -> ERT a (StaticEnv -> StaticEnv)
 checkFnDef x = case x of
-    FnDef _ type_ ident args block -> failure x
+    FnDef _ type_ ident_ args_ block_ -> do
+        args  <- checkArgs args_
+        rtype <- checkType type_
+        lvl   <- asks _nestLvl
+        let argF = foldr ((.) . (\(t, i) -> Map.insert i (t, lvl))) id args
+        local (over nestLvl (+ 1) . over varMap argF) (checkBlock block_)
+        let funF = Map.insert ident_ ((rtype, args), lvl)
+        return (over funMap funF)
 
-checkIdentUnique :: Show a => [Arg a] -> ERT a [(Ident, StaticType)]
-checkIdentUnique list = reverse <$> foldM foldFunc [] list
-  where
-    elemPair :: Eq a => a -> [(a, b)] -> Bool
-    elemPair e = foldl (\acc x -> acc || (fst x == e)) False
-    foldFunc
-        :: Show a
-        => [(Ident, StaticType)]
-        -> Arg a
-        -> ERT a [(Ident, StaticType)]
-    foldFunc acc (Arg p t n) = if n `elemPair` acc
-        then throwError (RedefinitionOfSymbol p n)
-        else return $ (n, transType t) : acc
+checkArgs :: Show a => [Arg a] -> ERT a [(T.Type, Ident)]
+checkArgs args = do
+    argst <- mapM checkArg args
+    let idents = map (snd . fst) argst
+    checkIdentUnique $ zip idents (map snd argst)
+    return $ map fst argst
 
-transArg :: Show a => Arg a -> Result
-transArg x = case x of
-    Arg _ type_ ident -> failure x
-
-
-transClassMember :: Show a => ClassMember a -> Result
-transClassMember x = case x of
-    ClassField _ type_ idents -> failure x
-    ClassMethod _ fndef       -> failure x
+checkArg :: Show a => Arg a -> ERT a ((T.Type, Ident), a)
+checkArg (Arg pos nonvoidtype ident) = do
+    t <- checkNonVoidType nonvoidtype
+    return ((t, ident), pos)
 
 
-transClassBlock :: Show a => ClassBlock a -> ERT a ()
-transClassBlock (ClassBlock p classmembers) = do
-    let fields  = filter isField classmembers
-    let methods = filter isMethod classmembers
-    return ()
+checkClassMember :: Show a => ClassMember a -> ERT a (StaticEnv -> StaticEnv)
+checkClassMember x = case x of
+    ClassField pos type_ idents -> do
+        ttype <- checkType type_
+        let zipped = zip idents $ repeat pos
+        lvl <- asks _nestLvl
+        checkIdentUnique zipped
+        mapM_ (uncurry throwIfMethodDefined)   zipped
+        mapM_ (uncurry throwIfVariableDefined) zipped
+        let functions =
+                map (\x -> over varMap (Map.insert x (ttype, lvl))) idents
+        return $ foldr (.) id functions
+    ClassMethod _ fndef -> do
+        return id
 
-  where
-    isField x = case x of
-        (ClassMethod _ _) -> True
-        _                 -> False
-    isMethod = not . isField
-    fieldMeta (ClassField _ _type _ident) = zip (repeat _type) _ident
-      -- methodMeta (ClassMethod _ fndef)
+
+-- checkClassBlock :: Show a => ClassBlock a -> Result
+-- checkClassBlock x = case x of
+--     ClassBlock _ classmembers -> failure x
 
 
-transClassDef :: Show a => ClassDef a -> Result
-transClassDef x = case x of
+checkClassDef :: Show a => ClassDef a -> Result
+checkClassDef x = case x of
     Class _ ident classblock            -> failure x
     ClassInh _ ident1 ident2 classblock -> failure x
 
 
-transBlock :: Show a => Block a -> Result
-transBlock x = case x of
+checkBlock :: Show a => Block a -> ERT a ()
+checkBlock x = case x of
     Block _ stmts -> failure x
 
 
-transStmt :: Show a => Stmt a -> ERT a Bool
-transStmt x = case x of
-    Empty _                 -> return False
-    BStmt _ (Block p stmts) -> do
-        local (over nestLvl (+ 1)) $ transStmtList stmts
-    Decl _ type_ items -> do
-        -- TODO
-        return False
-    Ass pos expr1 expr2 -> do
-        expr1t <- transExpr expr1
-        expr2t <- transExpr expr2
-        unless (expr1t == expr2t) $ throwError $ TypeMismatch pos expr1t expr2t
-        return False
-    Incr pos ident -> do
-        throwIfWrongType (EVar pos ident) TypeInt
-        return False
-    Decr pos ident -> transStmt (Incr pos ident)
-    Ret  pos expr  -> do
-        exprType     <- transExpr expr
-        expectedType <- asks _retType
-        when (exprType /= expectedType) $ throwError $ TypeMismatch
-            pos
-            expectedType
-            exprType
-        return True
-    VRet pos -> do
-        expectedType <- asks _retType
-        unless (expectedType == TypeVoid) $ throwError $ TypeMismatch
-            pos
-            expectedType
-            TypeVoid
-        return False
-    Cond _ expr stmt -> do
-        throwIfWrongType expr TypeBool
-        transStmt stmt
-        return False
-    CondElse _ expr stmt1 stmt2 -> do
-        throwIfWrongType expr TypeBool
-        liftM2 (&&) (transStmt stmt1) (transStmt stmt2)
-    While _ expr stmt -> do
-        throwIfWrongType expr TypeBool
-        transStmt stmt
-        return False
-    For pos type_ ident expr stmt -> do
-        let itemType = transType type_
-        iterableType <- transExpr expr
-        case iterableType of
-            (TypeArr nestedType) -> do
-                unless (nestedType == itemType) $ throwError $ TypeMismatch
-                    pos
-                    itemType
-                    nestedType
-                -- TODO Add ident to env
-                lvl <- asks _nestLvl
-                local
-                    ( over nestLvl (+ 1)
-                    . over varMap (Map.insert ident (iterableType, lvl + 1))
-                    )
-                    (transStmt stmt)
-                transStmt stmt
-                return False
-            _ -> throwError $ TypeMismatch pos (TypeArr itemType) iterableType
-    SExp _ expr -> do
-        transExpr expr
-        return False
-
-transStmtList :: Show a => [Stmt a] -> ERT a Bool
-transStmtList ((Decl pos type_ items) : rest) = do
-    return False
-transStmtList (s : ss) = liftM2 (||) (transStmt s) (transStmtList ss)
-transStmtList []       = False
+checkStmt :: Show a => Stmt a -> Result
+checkStmt x = case x of
+    Empty _                           -> failure x
+    BStmt _ block                     -> failure x
+    Decl _ nonvoidtype items          -> failure x
+    Ass  _ expr1       expr2          -> failure x
+    Incr _ ident                      -> failure x
+    Decr _ ident                      -> failure x
+    Ret  _ expr                       -> failure x
+    VRet _                            -> failure x
+    Cond _ expr stmt                  -> failure x
+    CondElse _ expr stmt1 stmt2       -> failure x
+    While _ expr stmt                 -> failure x
+    For _ nonvoidtype ident expr stmt -> failure x
+    SExp _ expr                       -> failure x
 
 
-transItem :: Show a => Item a -> ERT a ()
-transItem x = case x of
-    NoInit _ ident    -> return ()
-    Init _ ident expr -> do
-        exprType <- transExpr expr
-        return ()
+checkItem :: Show a => Item a -> Result
+checkItem x = case x of
+    NoInit _ ident    -> failure x
+    Init _ ident expr -> failure x
 
 
-transClassType :: Show a => ClassType a -> StaticType
-transClassType x = case x of
-    BCType _ ident -> TypeCls ident
+checkScalarType :: Show a => ScalarType a -> ERT a T.Type
+checkScalarType x = case x of
+    ClassType _ ident -> failure x
+    Int  _            -> failure x
+    Str  _            -> failure x
+    Bool _            -> failure x
 
 
-transBType :: Show a => BType a -> StaticType
-transBType x = case x of
-    Int  _ -> TypeInt
-    Str  _ -> TypeStr
-    Bool _ -> TypeBool
+checkNonVoidType :: Show a => NonVoidType a -> ERT a T.Type
+checkNonVoidType x = case x of
+    ArrayType  _ scalartype -> failure x
+    ScalarType _ scalartype -> failure x
 
 
-transNonVoidType :: Show a => NonVoidType a -> StaticType
-transNonVoidType x = case x of
-    CType _ (BCType _ ident) -> TypeCls ident
-    BType _ btype            -> transBType btype
+checkType :: Show a => Type a -> ERT a T.Type
+checkType x = case x of
+    NonVoidType _ nonvoidtype -> failure x
+    Void _                    -> failure x
 
 
-transType :: Show a => Type a -> StaticType
-transType x = case x of
-    ArrayType   _ nonvoidtype -> transNonVoidType nonvoidtype
-    NonVoidType _ nonvoidtype -> transNonVoidType nonvoidtype
-    Void _                    -> TypeVoid
+checkExpr :: Show a => Expr a -> ERT a T.Type
+checkExpr x = case x of
+    ENewObject pos nonvoidtype -> do
+        let t = checkNonVoidType nonvoidtype
+        case t of
+            T.TypeClass _ -> do
+                throwIfNotDef pos t
+                return t
+            _ -> throwError $ NewOnNonClassType pos t
+        return t
+    ENewArray pos indexed index -> do
+        -- indexed is arrType
+        throwIfWrongType index T.TypeInt
+        arrType <- checkExpr indexed
+        throwIfNotDef pos arrType
+        return possiblyArrType
+    EMember _ expr ident           -> failure x
+    EMemberCall _ expr ident exprs -> failure x
+    EVar    _ ident                -> failure x
+    ELitInt _ integer              -> failure x
+    ELitTrue  _                    -> failure x
+    ELitFalse _                    -> failure x
+    ENull     _                    -> failure x
+    EString _ string               -> failure x
+    EApp    _ ident exprs          -> failure x
+    EAccess _ expr1 expr2          -> failure x
+    ECast _ ident                  -> failure x
+    Neg   _ expr                   -> failure x
+    Not   _ expr                   -> failure x
+    EMul _ expr1 mulop expr2       -> failure x
+    EAdd _ expr1 addop expr2       -> failure x
+    ERel _ expr1 relop expr2       -> failure x
+    EAnd _ expr1 expr2             -> failure x
+    EOr  _ expr1 expr2             -> failure x
 
 
-transCastType :: Show a => CastType a -> StaticType
-transCastType x = case x of
-    CastTypeClass _ nonvoidtype -> transNonVoidType nonvoidtype
-    CastTypeArr   _ nonvoidtype -> transNonVoidType nonvoidtype
+checkAddOp :: Show a => AddOp a -> Result
+checkAddOp x = case x of
+    Plus  _ -> failure x
+    Minus _ -> failure x
 
 
-throwArgumentsMismatch :: Show a => a -> [StaticType] -> [Expr a] -> ERT a ()
-throwArgumentsMismatch pos formal actual = do
+checkMulOp :: Show a => MulOp a -> Result
+checkMulOp x = case x of
+    Times _ -> failure x
+    Div   _ -> failure x
+    Mod   _ -> failure x
+
+
+checkRelOp :: Show a => RelOp a -> Result
+checkRelOp x = case x of
+    LTH _ -> failure x
+    LE  _ -> failure x
+    GTH _ -> failure x
+    GE  _ -> failure x
+    EQU _ -> failure x
+    NE  _ -> failure x
+
+getSuperMembers :: Ident -> [ClassMeta]
+getSuperMembers = undefined
+
+throwIfWrongType :: Show a => Expr a -> T.Type -> ERT a T.Type
+throwIfWrongType expr ttype = do
+    e@(_t, _) <- checkExpr expr
+    let t = _t
+    if t == ttype
+        then return e
+        else throwError $ TypeMismatch (exprPosition expr) ttype t
+
+throwIfTypeNotDefined :: Show a => a -> T.Type -> ERT a ()
+throwIfTypeNotDefined p t = do
+    defined <- typeDefined t
+    unless defined $ throwError (TypeNotDefined p t)
+
+throwIfSymbolNotDefined :: Show a => a -> Ident -> ERT a ()
+throwIfSymbolNotDefined = undefined
+
+throwIfArgumentsMismatch
+    :: Show a => a -> [T.Type] -> [Expr a] -> ERT a [T.Type]
+throwIfArgumentsMismatch pos formal actual = do
     when (length formal /= length actual) $ throwError $ WrongNumberOfArguments
         pos
         (length formal)
         (length actual)
-    zipWithM_
+    zipWithM
         (\t expr -> do
-            exprType <- transExpr expr
+            exprType <- checkExpr expr
             when (exprType /= t)
                 $ throwError (TypeMismatch (exprPosition expr) t exprType)
+            return exprType
         )
         formal
         actual
 
+_throwIfSymbolDefined f var pos = do
+    lvl <- asks _nestLvl
+    a   <- asks $ Map.lookup var . f
+    case a of
+        Just (_, definedLvl) ->
+            when (definedLvl == lvl) $ throwError $ RedefinitionOfSymbol pos var
+        Nothing -> return ()
 
-transExpr :: Show a => Expr a -> ERT a StaticType
-transExpr x = case x of
-    ENewObject pos ident -> do
-        let t = TypeCls ident
-        throwIfNotDef pos t
-        return t
-    ENewArray pos nonvoidtype expr -> do
-        throwIfWrongType expr TypeInt
-        let arrType = transNonVoidType nonvoidtype
-        throwIfNotDef pos arrType
-        return arrType
-    EMember p expr ident -> do
-        objType <- transExpr expr
-        fieldType p objType ident
-        return TypeBool
-    EMemberCall pos expr ident arguments -> do
-        objType <- transExpr expr
-        throwIfNotDef pos objType
-        (returnType, argumentsTypes) <- methodType pos objType ident
-        throwArgumentsMismatch pos (map fst argumentsTypes) arguments
-        return returnType
-    EVar pos ident -> do
-        fst
-            <$> (   asks (Map.lookup ident . _varMap)
-                >>= lookupFail (VariableNotInScope pos ident)
-                )
-    ELitInt _ _              -> return TypeInt
-    ELitTrue  _              -> return TypeBool
-    ELitFalse _              -> return TypeBool
-    ENull     _              -> return TypeNull
-    EString _ _              -> return TypeStr
-    EApp pos ident arguments -> do
-        (returnType, argumentsTypes) <- asks (Map.lookup ident . _funMap)
-            >>= lookupFail (FunctionNotInScope pos ident)
-        throwArgumentsMismatch pos (map fst argumentsTypes) arguments
-        return returnType
-    EAccess pos toIndex index -> do
-        toIndexType <- transExpr toIndex
-        case toIndexType of
-            TypeArr _ -> throwIfWrongType index TypeInt
-            _         -> throwError $ NonIndexable pos toIndexType
-    ECast p expr cast -> do
-        exprType <- transExpr expr
-        let castType = transCastType cast
-        unless (exprType == TypeNull) $ throwError $ TypeMismatch p
-                                                                  TypeNull
-                                                                  exprType
-        return castType
-    Neg _ expr           -> throwIfWrongType expr TypeInt
-    Not _ expr           -> throwIfWrongType expr TypeBool
-    EMul _ lhs mulop rhs -> do
-        throwIfWrongType lhs TypeInt
-        throwIfWrongType rhs TypeInt
-    EAdd pos lhs addop rhs -> do
-        lhsType <- transExpr lhs
-        rhsType <- transExpr rhs
-        unless (lhsType == rhsType) $ throwError $ TypeMismatch pos
-                                                                lhsType
-                                                                rhsType
-        return lhsType
-    ERel p lhs relop rhs -> do
-        lhsType <- transExpr lhs
-        rhsType <- transExpr rhs
-        when (lhsType /= rhsType) $ throwError $ CompareDifferentTypes
-            p
-            lhsType
-            rhsType
-        return TypeBool
-    EAnd p lhs rhs -> do
-        throwIfWrongType lhs TypeBool
-        throwIfWrongType rhs TypeBool
-        return TypeBool
-    EOr p lhs rhs -> transExpr $ EAnd p lhs rhs
+throwIfVariableDefined :: Show a => Ident -> a -> ERT a ()
+throwIfVariableDefined = _throwIfSymbolDefined _varMap
+
+throwIfMethodDefined :: Show a => Ident -> a -> ERT a ()
+throwIfMethodDefined = _throwIfSymbolDefined _funMap
+
+throwIfClassDefined :: Show a => Ident -> a -> ERT a ()
+throwIfClassDefined var pos = do
+    a <- asks $ Map.lookup var . _classMap
+    case a of
+        Just _  -> throwError $ RedefinitionOfSymbol pos var
+        Nothing -> return ()
 
 
+signatureFunction :: Show a => FnDef a -> ERT a (Ident, Function)
+signatureFunction = undefined
 
-throwIfWrongType :: Show a => Expr a -> StaticType -> ERT a StaticType
-throwIfWrongType expr ttype = do
-    t <- transExpr expr
-    if t == ttype
-        then return ttype
-        else throwError $ TypeMismatch (exprPosition expr) ttype t
-
-throwIfNotDef :: Show a => a -> StaticType -> ERT a ()
-throwIfNotDef p t = do
-    defined <- typeDefined t
-    unless defined $ throwError (TypeNotDefined p t)
-
-sigFnDef :: Show a => FnDef a -> (Ident, Function)
-sigFnDef (FnDef _ type_ ident args _) = (ident, (stype, argsTypes))
+checkIdentUnique :: Show a => [(Ident, a)] -> ERT a ()
+checkIdentUnique list = do
+    foldM_ foldFunc [] list
   where
-    stype     = transType type_
-    argsTypes = sigArgList args
-
-sigClassBlock
-    :: Show a => ClassBlock a -> ([(Ident, Field)], [(Ident, Function)])
-sigClassBlock (ClassBlock _ classmembers) = (fields, methods)
-  where
-    isField x = case x of
-        (ClassMethod _ _) -> True
-        _                 -> False
-    isMethod = not . isField
-    fieldTrans (ClassField _ _type _ident) =
-        zip _ident (repeat $ transType _type)
-    methodTrans (ClassMethod _ fndef) = sigFnDef fndef
-    fields  = concatMap fieldTrans $ filter isField classmembers
-    methods = map methodTrans $ filter isMethod classmembers
+    elemPair e = foldl (\acc x -> acc || (fst x == e)) False
+    foldFunc acc (n, p) = if n `elemPair` acc
+        then throwError (RedefinitionOfSymbol p n)
+        else return $ (n, p) : acc
 
 
-sigArgList :: Show a => [Arg a] -> [(StaticType, Ident)]
-sigArgList = map (\(Arg _ t n) -> (transType t, n))
+checkClassBlock
+    :: Show a => ClassBlock a -> ERT a ([(Ident, Field)], [(Ident, Function)])
+checkClassBlock (ClassBlock _ ((ClassField pos t idents) : rest)) = do
+    return ([], [])
+-- checkClassBlock
+--     :: Show a => ClassBlock a -> ERT a ([(Ident, Field)], [(Ident, Function)])
+-- checkClassBlock (ClassBlock _ classmembers) = do
+--     checkIdentUnique allSymbols
+--     fields  <- concatMapM fieldTrans $ filter isField classmembers
+--     methods <- mapM methodTrans $ filter isMethod classmembers
+--     return (fields, methods)
+--   where
+--     isField x = case x of
+--         (ClassMethod _ _) -> True
+--         _                 -> False
+--     isMethod = not . isField
+--     fieldTrans (ClassField _ (NonVoidType _ _type) _ident) = do
+--         return $ zip _ident (repeat $ checkNonVoidType _type)
+--     fieldTrans (ClassField _ (Void p) _ident) = do
+--         throwError $ VoidField p
+--     methodTrans (ClassMethod _ fndef) = signatureFunction fndef
+--     allSymbols = foldl
+--         (\acc x -> case x of
+--             (ClassMethod p (FnDef _ _ n _ _)) -> (n, p) : acc
+--             (ClassField p _ names           ) -> zip names (repeat p) ++ acc
+--         )
+--         []
+--         classmembers
+
+-- signatureClassBlock
+--     :: Show a => ClassBlock a -> ERT a ([(Ident, Field)], [(Ident, Function)])
+-- signatureClassBlock (ClassBlock _ classmembers) = do
+--     checkIdentUnique allSymbols
+--     fields  <- concatMapM fieldTrans $ filter isField classmembers
+--     methods <- mapM methodTrans $ filter isMethod classmembers
+--     return (fields, methods)
+--   where
+--     isField x = case x of
+--         (ClassMethod _ _) -> True
+--         _                 -> False
+--     isMethod = not . isField
+--     fieldTrans (ClassField _ (NonVoidType _ _type) _ident) = do
+--         return $ zip _ident (repeat $ checkNonVoidType _type)
+--     fieldTrans (ClassField _ (Void p) _ident) = do
+--         throwError $ VoidField p
+--     methodTrans (ClassMethod _ fndef) = signatureFunction fndef
+--     allSymbols = foldl
+--         (\acc x -> case x of
+--             (ClassMethod p (FnDef _ _ n _ _)) -> (n, p) : acc
+--             (ClassField p _ names) -> zip names (repeat p) ++ acc
+--         )
+--         []
+--         classmembers
 
 
-fieldType :: Show a => a -> StaticType -> Ident -> ERT a StaticType
-fieldType p (TypeCls className) fieldName = do
-    ClassMeta { _fields = fieldsMap } <- asks (Map.lookup className . _classMap)
-        >>= lookupFail (ClassNotInScope p className)
-    case Map.lookup fieldName fieldsMap of
-        (Just t) -> return t
-        _        -> throwError $ MemberNotFound p (TypeCls className) fieldName
-fieldType p className fieldName =
-    throwError $ MemberNotFound p className fieldName
-
-
-methodType :: Show a => a -> StaticType -> Ident -> ERT a Function
-methodType p (TypeCls className) methodName = do
+getMethodType :: Show a => a -> T.Type -> Ident -> ERT a Function
+getMethodType pos cls@(T.TypeClass className) methodName = do
     ClassMeta { _methods = methodsMap } <-
         asks (Map.lookup className . _classMap)
-            >>= lookupFail (ClassNotInScope p className)
+            >>= lookupFail (TypeNotDefined pos cls)
     case Map.lookup methodName methodsMap of
         (Just t) -> return t
-        _        -> throwError $ MemberNotFound p (TypeCls className) methodName
-methodType p className methodName =
-    throwError $ MemberNotFound p className methodName
+        _        -> throwError $ MethodNotInScope pos cls methodName
+methodType pos className methodName =
+    throwError $ MethodNotInScope pos className methodName
 
-typeDefined :: Show a => StaticType -> ERT a Bool
-typeDefined (TypeArr t) = typeDefined t
-typeDefined (TypeCls n) = asks $ Map.member n . _classMap
-typeDefined _           = return True
+getFieldType :: Show a => a -> T.Type -> Ident -> ERT a T.Type
+getFieldType pos cls@(T.TypeClass className) fieldName = do
+    ClassMeta { _fields = fieldsMap } <- asks (Map.lookup className . _classMap)
+        >>= lookupFail (TypeNotDefined pos cls)
+    case Map.lookup fieldName fieldsMap of
+        (Just t) -> return t
+        _        -> throwError $ FieldNotInScope pos cls fieldName
+fieldType pos className fieldName =
+    throwError $ FieldNotInScope pos className fieldName
+
+typeDefined :: Show a => T.Type -> ERT a Bool
+typeDefined (T.TypeArray t) = typeDefined t
+typeDefined (T.TypeClass n) = asks $ Map.member n . _classMap
+typeDefined _               = return True
+
+lookupFail err = maybe (throwError err) return

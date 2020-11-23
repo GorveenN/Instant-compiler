@@ -15,6 +15,7 @@ dependencies:
 - process
 - text-format
 - lens
+- extra
 
 library:
   source-dirs: src

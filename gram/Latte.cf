@@ -6,15 +6,15 @@ Program.   	Program 	::= [TopDef] ;
 TopClassDef. 	TopDef 		::= ClassDef;
 TopFunDef.    	TopDef 		::= FnDef;
 
-FnDef.	   	FnDef 		::= Type LIdent "(" [Arg] ")" Block ;
-Arg. 	   	Arg 		::= NonVoidType LIdent;
+FnDef.	   	FnDef 		::= Type Ident "(" [Arg] ")" Block ;
+Arg. 	   	Arg 		::= NonVoidType Ident;
 
-ClassField.     ClassMember     ::= Type [LIdent] ";";
+ClassField.     ClassMember     ::= Type [Ident] ";";
 ClassMethod.    ClassMember     ::= FnDef;
 ClassBlock.     ClassBlock      ::= "{" [ClassMember] "}" ;
 
-Class.        	ClassDef 	::= "class" UIdent ClassBlock ;
-ClassInh.     	ClassDef 	::= "class" UIdent "extends" UIdent ClassBlock ;
+Class.        	ClassDef 	::= "class" Ident ClassBlock ;
+ClassInh.     	ClassDef 	::= "class" Ident "extends" Ident ClassBlock ;
 
 separator Arg "," ;
 separator nonempty TopDef "" ;
@@ -29,12 +29,12 @@ Empty.     Stmt 	::= ";" ;
 BStmt.     Stmt 	::= Block ;
 Decl.      Stmt 	::= NonVoidType [Item] ";" ;
 
-NoInit.    Item 	::= LIdent ;
-Init.      Item 	::= LIdent "=" Expr ;
+NoInit.    Item 	::= Ident ;
+Init.      Item 	::= Ident "=" Expr ;
 
 Ass.       Stmt 	::= Expr "=" Expr  ";" ;
-Incr.      Stmt 	::= LIdent "++"  ";" ;
-Decr.      Stmt 	::= LIdent "--"  ";" ;
+Incr.      Stmt 	::= Ident "++"  ";" ;
+Decr.      Stmt 	::= Ident "--"  ";" ;
 
 Ret.       Stmt 	::= "return" Expr ";" ;
 VRet.      Stmt 	::= "return" ";" ;
@@ -43,17 +43,17 @@ Cond.      Stmt 	::= "if" "(" Expr ")" Stmt  ;
 CondElse.  Stmt 	::= "if" "(" Expr ")" Stmt "else" Stmt  ;
 
 While.     Stmt 	::= "while" "(" Expr ")" Stmt ;
-For.       Stmt 	::= "for" "(" NonVoidType LIdent ":" Expr ")" Stmt ;
+For.       Stmt 	::= "for" "(" NonVoidType Ident ":" Expr ")" Stmt ;
 
 SExp.      Stmt 	::= Expr  ";" ;
 
 separator  Stmt "" ;
 separator nonempty Item "," ;
-separator nonempty LIdent "," ;
+separator nonempty Ident "," ;
 
 -- Types ---------------------------------------------------
 
-ClassType.      ScalarType      ::= UIdent ;
+ClassType.      ScalarType      ::= Ident ;
 Int.            ScalarType 	::= "int" ;
 Str.            ScalarType 	::= "string" ;
 Bool.           ScalarType 	::= "boolean" ;
@@ -68,21 +68,20 @@ Void.           Type            ::= "void" ;
 ENewObject.	Expr8 	::= "new" NonVoidType ;
 ENewArray.	Expr7 	::= Expr8 "[" Expr "]" ;
 
-EMember.	Expr6 	::= Expr6 "." LIdent ;
-EMemberCall.    Expr6 	::= Expr6 "." LIdent "(" [Expr]")"  ;
+EMember.	Expr6 	::= Expr6 "." Ident ;
+EMemberCall.    Expr6 	::= Expr6 "." Ident "(" [Expr]")"  ;
 
-EVar. 		Expr6 	::= LIdent ;
+EVar. 		Expr6 	::= Ident ;
 ELitInt. 	Expr6   ::= Integer ;
 ELitTrue. 	Expr6   ::= "true" ;
 ELitFalse. 	Expr6   ::= "false" ;
 ENull. 		Expr6   ::= "null" ;
 EString. 	Expr6   ::= String ;
 
-EApp. 		Expr6   ::= LIdent "(" [Expr] ")" ;
+EApp. 		Expr6   ::= Ident "(" [Expr] ")" ;
 EAccess. 	Expr6   ::= Expr6 "[" Expr "]";
 
--- ECast. 		Expr5   ::= "(" ")" Expr5 "as" CastType;
-ECast. 		Expr5   ::= "(" UIdent ")" "null"  ;
+ECast. 		Expr5   ::= "null" "as" Ident;
 Neg.            Expr5   ::= "-" Expr6 ;
 Not. 		Expr5   ::= "!" Expr6 ;
 
@@ -117,5 +116,3 @@ comment "#" ;
 comment "//" ;
 comment "/*" "*/" ;
 
-token UIdent (upper (letter | digit | '_')*) ;
-token LIdent (lower (letter | digit | '_')*) ;

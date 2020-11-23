@@ -1,7 +1,7 @@
 module Compiler.Frontend.Utils where
 
 import           AbsLatte
-import Compiler.Frontend.Types
+import           Compiler.Frontend.Types
 
 import           Control.Monad.Except
 import           Control.Monad.Reader
@@ -28,5 +28,4 @@ exprPosition expr = case expr of
     EMember   pos _ _     -> pos
     EMemberCall pos _ _ _ -> pos
     ENull pos             -> pos
-    ECast pos _ _         -> pos
-
+    ECast pos _           -> pos

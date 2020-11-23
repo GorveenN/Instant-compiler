@@ -27,12 +27,12 @@ data FnDef a = FnDef a (Type a) Ident [Arg a] (Block a)
 instance Functor FnDef where
     fmap f x = case x of
         FnDef a type_ ident args block -> FnDef (f a) (fmap f type_) ident (map (fmap f) args) (fmap f block)
-data Arg a = Arg a (Type a) Ident
+data Arg a = Arg a (NonVoidType a) Ident
   deriving (Eq, Ord, Show, Read)
 
 instance Functor Arg where
     fmap f x = case x of
-        Arg a type_ ident -> Arg (f a) (fmap f type_) ident
+        Arg a nonvoidtype ident -> Arg (f a) (fmap f nonvoidtype) ident
 data ClassMember a
     = ClassField a (Type a) [Ident] | ClassMethod a (FnDef a)
   deriving (Eq, Ord, Show, Read)
@@ -65,7 +65,7 @@ instance Functor Block where
 data Stmt a
     = Empty a
     | BStmt a (Block a)
-    | Decl a (Type a) [Item a]
+    | Decl a (NonVoidType a) [Item a]
     | Ass a (Expr a) (Expr a)
     | Incr a Ident
     | Decr a Ident
@@ -74,7 +74,7 @@ data Stmt a
     | Cond a (Expr a) (Stmt a)
     | CondElse a (Expr a) (Stmt a) (Stmt a)
     | While a (Expr a) (Stmt a)
-    | For a (Type a) Ident (Expr a) (Stmt a)
+    | For a (NonVoidType a) Ident (Expr a) (Stmt a)
     | SExp a (Expr a)
   deriving (Eq, Ord, Show, Read)
 
@@ -82,7 +82,7 @@ instance Functor Stmt where
     fmap f x = case x of
         Empty a -> Empty (f a)
         BStmt a block -> BStmt (f a) (fmap f block)
-        Decl a type_ items -> Decl (f a) (fmap f type_) (map (fmap f) items)
+        Decl a nonvoidtype items -> Decl (f a) (fmap f nonvoidtype) (map (fmap f) items)
         Ass a expr1 expr2 -> Ass (f a) (fmap f expr1) (fmap f expr2)
         Incr a ident -> Incr (f a) ident
         Decr a ident -> Decr (f a) ident
@@ -91,7 +91,7 @@ instance Functor Stmt where
         Cond a expr stmt -> Cond (f a) (fmap f expr) (fmap f stmt)
         CondElse a expr stmt1 stmt2 -> CondElse (f a) (fmap f expr) (fmap f stmt1) (fmap f stmt2)
         While a expr stmt -> While (f a) (fmap f expr) (fmap f stmt)
-        For a type_ ident expr stmt -> For (f a) (fmap f type_) ident (fmap f expr) (fmap f stmt)
+        For a nonvoidtype ident expr stmt -> For (f a) (fmap f nonvoidtype) ident (fmap f expr) (fmap f stmt)
         SExp a expr -> SExp (f a) (fmap f expr)
 data Item a = NoInit a Ident | Init a Ident (Expr a)
   deriving (Eq, Ord, Show, Read)
@@ -100,49 +100,33 @@ instance Functor Item where
     fmap f x = case x of
         NoInit a ident -> NoInit (f a) ident
         Init a ident expr -> Init (f a) ident (fmap f expr)
-data ClassType a = BCType a Ident
+data ScalarType a = ClassType a Ident | Int a | Str a | Bool a
   deriving (Eq, Ord, Show, Read)
 
-instance Functor ClassType where
+instance Functor ScalarType where
     fmap f x = case x of
-        BCType a ident -> BCType (f a) ident
-data BType a = Int a | Str a | Bool a
-  deriving (Eq, Ord, Show, Read)
-
-instance Functor BType where
-    fmap f x = case x of
+        ClassType a ident -> ClassType (f a) ident
         Int a -> Int (f a)
         Str a -> Str (f a)
         Bool a -> Bool (f a)
-data NonVoidType a = CType a (ClassType a) | BType a (BType a)
+data NonVoidType a
+    = ArrayType a (ScalarType a) | ScalarType a (ScalarType a)
   deriving (Eq, Ord, Show, Read)
 
 instance Functor NonVoidType where
     fmap f x = case x of
-        CType a classtype -> CType (f a) (fmap f classtype)
-        BType a btype -> BType (f a) (fmap f btype)
-data Type a
-    = ArrayType a (NonVoidType a)
-    | NonVoidType a (NonVoidType a)
-    | Void a
+        ArrayType a scalartype -> ArrayType (f a) (fmap f scalartype)
+        ScalarType a scalartype -> ScalarType (f a) (fmap f scalartype)
+data Type a = NonVoidType a (NonVoidType a) | Void a
   deriving (Eq, Ord, Show, Read)
 
 instance Functor Type where
     fmap f x = case x of
-        ArrayType a nonvoidtype -> ArrayType (f a) (fmap f nonvoidtype)
         NonVoidType a nonvoidtype -> NonVoidType (f a) (fmap f nonvoidtype)
         Void a -> Void (f a)
-data CastType a
-    = CastTypeClass a (NonVoidType a) | CastTypeArr a (NonVoidType a)
-  deriving (Eq, Ord, Show, Read)
-
-instance Functor CastType where
-    fmap f x = case x of
-        CastTypeClass a nonvoidtype -> CastTypeClass (f a) (fmap f nonvoidtype)
-        CastTypeArr a nonvoidtype -> CastTypeArr (f a) (fmap f nonvoidtype)
 data Expr a
-    = ENewObject a Ident
-    | ENewArray a (NonVoidType a) (Expr a)
+    = ENewObject a (NonVoidType a)
+    | ENewArray a (Expr a) (Expr a)
     | EMember a (Expr a) Ident
     | EMemberCall a (Expr a) Ident [Expr a]
     | EVar a Ident
@@ -153,7 +137,7 @@ data Expr a
     | EString a String
     | EApp a Ident [Expr a]
     | EAccess a (Expr a) (Expr a)
-    | ECast a (Expr a) (CastType a)
+    | ECast a Ident
     | Neg a (Expr a)
     | Not a (Expr a)
     | EMul a (Expr a) (MulOp a) (Expr a)
@@ -165,8 +149,8 @@ data Expr a
 
 instance Functor Expr where
     fmap f x = case x of
-        ENewObject a ident -> ENewObject (f a) ident
-        ENewArray a nonvoidtype expr -> ENewArray (f a) (fmap f nonvoidtype) (fmap f expr)
+        ENewObject a nonvoidtype -> ENewObject (f a) (fmap f nonvoidtype)
+        ENewArray a expr1 expr2 -> ENewArray (f a) (fmap f expr1) (fmap f expr2)
         EMember a expr ident -> EMember (f a) (fmap f expr) ident
         EMemberCall a expr ident exprs -> EMemberCall (f a) (fmap f expr) ident (map (fmap f) exprs)
         EVar a ident -> EVar (f a) ident
@@ -177,7 +161,7 @@ instance Functor Expr where
         EString a string -> EString (f a) string
         EApp a ident exprs -> EApp (f a) ident (map (fmap f) exprs)
         EAccess a expr1 expr2 -> EAccess (f a) (fmap f expr1) (fmap f expr2)
-        ECast a expr casttype -> ECast (f a) (fmap f expr) (fmap f casttype)
+        ECast a ident -> ECast (f a) ident
         Neg a expr -> Neg (f a) (fmap f expr)
         Not a expr -> Not (f a) (fmap f expr)
         EMul a expr1 mulop expr2 -> EMul (f a) (fmap f expr1) (fmap f mulop) (fmap f expr2)

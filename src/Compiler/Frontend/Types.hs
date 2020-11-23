@@ -1,20 +1,32 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Compiler.Frontend.Types where
-
-import           AbsLatte
 
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import qualified Data.Map                      as Map
 
+import qualified Compiler.Backend.Tree         as T
+
+
+import           Control.Lens            hiding ( element
+                                                , Empty
+                                                )
+import           Control.Lens.TH
+
+import           AbsLatte                       ( Ident )
+
 
 data StaticEnv = StaticEnv
-    { _varMap :: VarMap
-    , _funMap :: FunMap
-    , _classMap :: ClassMap
+    -- { _varMap :: VarMap -- used to track redefinition of symbol
+    { _varMap :: VarMap -- used to track redefinition of symbol
+    , _funMap :: FunMap -- used to track redefinition of symbol
+    , _classMap :: ClassMap -- used to track redefinition of symbol
+    , _allVars :: VarMap
+    , _allFuns :: FunMap
+    , _allClasses :: ClassMap
     , _retType :: RetType
     , _nestLvl :: NestLvl
-    , _className :: Maybe Ident
     }
 
 data ClassMeta = ClassMeta
@@ -25,55 +37,30 @@ data ClassMeta = ClassMeta
 
 type ERT a r = ReaderT StaticEnv (Except (StaticException a)) r
 
-type Function = (StaticType, [(StaticType, Ident)])
-type Field = StaticType
-type RetType = StaticType
+type Function = (T.Type, [(T.Type, Ident)])
+type Field = T.Type
+type RetType = Maybe T.Type
 
 type NestLvl = Integer
-type VarMap = Map.Map Ident (StaticType, NestLvl)
-type FunMap = Map.Map Ident Function
+type VarMap = Map.Map Ident (T.Type, NestLvl)
+type FunMap = Map.Map Ident (Function, NestLvl)
 type ClassMap = Map.Map Ident ClassMeta
 
-data StaticType
-    = TypeBool
-    | TypeVoid
-    | TypeInt
-    | TypeStr
-    | TypeNull
-    | TypeCls Ident
-    | TypeArr StaticType
-    deriving (Ord)
-
-instance Show StaticType where
-    show TypeVoid        = "bool"
-    show TypeBool        = "bool"
-    show TypeInt         = "int"
-    show TypeStr         = "string"
-    show (TypeArr inner) = "[" ++ show inner ++ "]"
-
-instance Eq StaticType where
-    TypeInt    == TypeInt    = True
-    TypeStr    == TypeStr    = True
-    TypeBool   == TypeBool   = True
-    TypeCls n1 == TypeCls n2 = n1 == n2
-    TypeArr t1 == TypeArr t2 = t1 == t2
-    _          == _          = False
-
-
-data StaticException a = ArrayNotHomogenous a
-    | VariableNotInScope a Ident
+data StaticException a
+    = VariableNotInScope a Ident
     | FunctionNotInScope a Ident
-    | ClassNotInScope  a Ident
-    | TypeMismatch a StaticType StaticType
-    | TypeNotDefined a StaticType
-    | CompareDifferentTypes a StaticType StaticType
-    | AddNonAddable a
-    | NonIndexable a StaticType
+    | FieldNotInScope a T.Type Ident
+    | MethodNotInScope a T.Type Ident
+    | TypeNotDefined a T.Type
+    | VoidField a
+    | TypeMismatch a T.Type T.Type
+    | CompareDifferentTypes a T.Type T.Type
+    | NonIndexable a T.Type
     | RedefinitionOfSymbol a Ident
     | NoReturn a Ident
     | WrongNumberOfArguments a Int Int
-    | NotSuperclass a Ident Ident
-    | MemberNotFound a StaticType Ident
+    | LogicOperationOnNonBooleans a T.Type T.Type
+    | NewOnNonClassType a T.Type
     | MainNotDefined
 
 instance Show (StaticException (Maybe (Int, Int))) where
@@ -101,8 +88,6 @@ instance Show (StaticException (Maybe (Int, Int))) where
             ++ " with expression of type "
             ++ show t2
             ++ "."
-    show (AddNonAddable (Just (line, column))) =
-        positionString line column ++ "Tried to add two boolean values"
     show (NonIndexable (Just (line, column)) t) =
         positionString line column
             ++ "Tried to index expression of type "
@@ -131,3 +116,5 @@ instance Show (StaticException (Maybe (Int, Int))) where
 positionString :: Int -> Int -> [Char]
 positionString line column =
     "Error at line " ++ show line ++ " column " ++ show column ++ ":\n"
+
+$(makeLenses ''StaticEnv)
