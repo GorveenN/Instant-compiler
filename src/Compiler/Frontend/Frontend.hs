@@ -32,15 +32,20 @@ checkIdent x = case x of
     Ident string -> string
 
 
-checkProgram :: Show a => Program a -> Result
-checkProgram x = case x of
-    Program _ topdefs -> failure x
+checkProgram :: Show a => Program a -> ERT a ()
+checkProgram (Program _ topdefs) = checkList checkTopDef topdefs
 
+checkList :: Show a => (b -> ERT a (StaticEnv -> StaticEnv)) -> [b] -> ERT a ()
+checkList fun (s : ss) = do
+    mod <- fun s
+    local mod (checkList fun ss)
+checkList _ [] = do
+    return ()
 
-checkTopDef :: Show a => TopDef a -> Result
+checkTopDef :: Show a => TopDef a -> ERT a (StaticEnv -> StaticEnv)
 checkTopDef x = case x of
-    TopClassDef _ classdef -> failure x
-    TopFunDef   _ fndef    -> failure x
+    TopClassDef _ classdef -> checkClassDef classdef
+    TopFunDef   _ fndef    -> checkFnDef fndef
 
 
 checkFnDef :: Show a => FnDef a -> ERT a (StaticEnv -> StaticEnv)
@@ -67,6 +72,10 @@ checkArg (Arg pos nonvoidtype ident) = do
     return ((t, ident), pos)
 
 
+-- TODO
+detectInheritanceCycle :: Ident -> ERT a Bool
+detectInheritanceCycle name = return True
+
 checkClassMember :: Show a => ClassMember a -> ERT a (StaticEnv -> StaticEnv)
 checkClassMember x = case x of
     ClassField pos type_ idents -> do
@@ -79,47 +88,94 @@ checkClassMember x = case x of
         let functions =
                 map (\x -> over varMap (Map.insert x (ttype, lvl))) idents
         return $ foldr (.) id functions
-    ClassMethod _ fndef -> do
+    ClassMethod _ fndef -> checkFnDef fndef
+
+
+checkClassBlock :: Show a => ClassBlock a -> ERT a (StaticEnv -> StaticEnv)
+checkClassBlock x = case x of
+    ClassBlock _ classmembers -> do
+        let fields  = filter isField classmembers
+        let methods = filter isField classmembers
+        checkList checkClassMember $ fields ++ methods
         return id
 
-
--- checkClassBlock :: Show a => ClassBlock a -> Result
--- checkClassBlock x = case x of
---     ClassBlock _ classmembers -> failure x
-
-
-checkClassDef :: Show a => ClassDef a -> Result
+checkClassDef :: Show a => ClassDef a -> ERT a (StaticEnv -> StaticEnv)
 checkClassDef x = case x of
-    Class _ ident classblock            -> failure x
-    ClassInh _ ident1 ident2 classblock -> failure x
+    Class _ name classblock -> do
+        checkClassBlock classblock
+        return (over classMap (Map.insert name Nothing))
+    ClassInh pos name supername classblock -> do
+        checkClassBlock classblock
+        cycle <- detectInheritanceCycle name
+        when cycle $ throwError $ CyclicInheritance pos name
+        return (over classMap (Map.insert name (Just supername)))
 
 
-checkBlock :: Show a => Block a -> ERT a ()
-checkBlock x = case x of
-    Block _ stmts -> failure x
+isField x = case x of
+    (ClassMethod _ _) -> True
+    _                 -> False
+isMethod = not . isField
 
 
-checkStmt :: Show a => Stmt a -> Result
+checkStmtDecl :: Show a => Stmt a -> [Stmt a] -> ERT a Bool
+checkStmtDecl (Decl _ nonvoidtype items) ss = do
+    t <- checkNonVoidType nonvoidtype
+    checkDeclList t items ss
+
+checkDeclList :: Show a => T.Type -> [Item a] -> [Stmt a] -> ERT a Bool
+checkDeclList t (i : ii) ss = do
+    f <- checkItem t i
+    local f (checkDeclList t ii ss)
+checkDeclList _ [] ss = checkStmtList ss
+
+checkItem :: Show a => T.Type -> Item a -> ERT a (StaticEnv -> StaticEnv)
+checkItem t x = case x of
+    NoInit _ ident -> do
+        lvl <- asks _nestLvl
+        return (over varMap (Map.insert ident (t, lvl)))
+    Init pos ident expr -> do
+        exprt <- checkExpr expr
+        unless (t == exprt) $ throwError $ TypeMismatch pos t exprt
+        lvl <- asks _nestLvl
+        return (over varMap (Map.insert ident (t, lvl)))
+
+checkBlock :: Show a => Block a -> ERT a Bool
+checkBlock (Block _ stmts) = local (over nestLvl (+ 1)) (checkStmtList stmts)
+
+checkStmtList :: Show a => [Stmt a] -> ERT a Bool
+checkStmtList (decl@(Decl{}) : ss) = checkStmtDecl decl ss
+checkStmtList (s : ss) = liftM2 (||) (checkStmt s) (checkStmtList ss)
+checkStmtList [] = return False
+
+-- TODO
+superclass :: T.Type -> T.Type -> Bool
+superclass t1 t2 = False
+
+checkStmt :: Show a => Stmt a -> ERT a Bool
 checkStmt x = case x of
-    Empty _                           -> failure x
-    BStmt _ block                     -> failure x
-    Decl _ nonvoidtype items          -> failure x
-    Ass  _ expr1       expr2          -> failure x
-    Incr _ ident                      -> failure x
-    Decr _ ident                      -> failure x
-    Ret  _ expr                       -> failure x
-    VRet _                            -> failure x
-    Cond _ expr stmt                  -> failure x
-    CondElse _ expr stmt1 stmt2       -> failure x
-    While _ expr stmt                 -> failure x
-    For _ nonvoidtype ident expr stmt -> failure x
-    SExp _ expr                       -> failure x
+    Empty _             -> return False
+    BStmt _ block       -> checkBlock block
+    Ass pos expr1 expr2 -> do
+        expr1t <- checkExpr expr1
+        expr2t <- checkExpr expr2
+        unless (expr1t == expr2t || expr2t `superclass` expr1t)
+            $ throwError
+            $ TypeMismatch pos expr1t expr2t
+        return False
+    Incr pos ident -> do
+        throwIfWrongType (EVar pos ident) T.TypeInt
+        throwIfVariableNotDefined ident pos
+        return False
+    Decr pos ident -> do
+        checkStmt (Incr pos ident)
+    Ret _ expr                        -> return False
+    VRet _                            -> return False
+    Cond _ expr stmt                  -> return False
+    CondElse _ expr stmt1 stmt2       -> return False
+    While _ expr stmt                 -> return False
+    For _ nonvoidtype ident expr stmt -> return False
+    SExp _ expr                       -> return False
 
-
-checkItem :: Show a => Item a -> Result
-checkItem x = case x of
-    NoInit _ ident    -> failure x
-    Init _ ident expr -> failure x
 
 
 checkScalarType :: Show a => ScalarType a -> ERT a T.Type
@@ -236,22 +292,20 @@ throwIfArgumentsMismatch pos formal actual = do
         formal
         actual
 
-_throwIfSymbolDefined f var pos = do
-    lvl <- asks _nestLvl
-    a   <- asks $ Map.lookup var . f
+_throwIfSymbolNotDefined f var pos = do
+    a <- asks $ Map.lookup var . f
     case a of
-        Just (_, definedLvl) ->
-            when (definedLvl == lvl) $ throwError $ RedefinitionOfSymbol pos var
-        Nothing -> return ()
+        Nothing -> throwError $ SymbolNotDefined pos var
+        _       -> return ()
 
-throwIfVariableDefined :: Show a => Ident -> a -> ERT a ()
-throwIfVariableDefined = _throwIfSymbolDefined _varMap
+throwIfVariableNotDefined :: Show a => Ident -> a -> ERT a ()
+throwIfVariableNotDefined = _throwIfSymbolNotDefined _varMap
 
-throwIfMethodDefined :: Show a => Ident -> a -> ERT a ()
-throwIfMethodDefined = _throwIfSymbolDefined _funMap
+throwIfMethodNotDefined :: Show a => Ident -> a -> ERT a ()
+throwIfMethodNotDefined = _throwIfSymbolNotDefined _funMap
 
-throwIfClassDefined :: Show a => Ident -> a -> ERT a ()
-throwIfClassDefined var pos = do
+throwIfClassNotDefined :: Show a => Ident -> a -> ERT a ()
+throwIfClassNotDefined var pos = do
     a <- asks $ Map.lookup var . _classMap
     case a of
         Just _  -> throwError $ RedefinitionOfSymbol pos var
@@ -271,10 +325,10 @@ checkIdentUnique list = do
         else return $ (n, p) : acc
 
 
-checkClassBlock
-    :: Show a => ClassBlock a -> ERT a ([(Ident, Field)], [(Ident, Function)])
-checkClassBlock (ClassBlock _ ((ClassField pos t idents) : rest)) = do
-    return ([], [])
+-- checkClassBlock
+--     :: Show a => ClassBlock a -> ERT a ([(Ident, Field)], [(Ident, Function)])
+-- checkClassBlock (ClassBlock _ ((ClassField pos t idents) : rest)) = do
+--     return ([], [])
 -- checkClassBlock
 --     :: Show a => ClassBlock a -> ERT a ([(Ident, Field)], [(Ident, Function)])
 -- checkClassBlock (ClassBlock _ classmembers) = do

@@ -21,8 +21,7 @@ data StaticEnv = StaticEnv
     -- { _varMap :: VarMap -- used to track redefinition of symbol
     { _varMap :: VarMap -- used to track redefinition of symbol
     , _funMap :: FunMap -- used to track redefinition of symbol
-    , _classMap :: ClassMap -- used to track redefinition of symbol
-    , _allVars :: VarMap
+    , _classMap :: Map.Map Ident (Maybe Ident) -- used to track redefinition of symbol
     , _allFuns :: FunMap
     , _allClasses :: ClassMap
     , _retType :: RetType
@@ -52,6 +51,7 @@ data StaticException a
     | FieldNotInScope a T.Type Ident
     | MethodNotInScope a T.Type Ident
     | TypeNotDefined a T.Type
+    | SymbolNotDefined a Ident
     | VoidField a
     | TypeMismatch a T.Type T.Type
     | CompareDifferentTypes a T.Type T.Type
@@ -61,6 +61,7 @@ data StaticException a
     | WrongNumberOfArguments a Int Int
     | LogicOperationOnNonBooleans a T.Type T.Type
     | NewOnNonClassType a T.Type
+    | CyclicInheritance a Ident
     | MainNotDefined
 
 instance Show (StaticException (Maybe (Int, Int))) where
