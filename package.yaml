@@ -6,16 +6,17 @@ extra-source-files:
 - README.md
 
 dependencies:
-- base >= 4.7 && < 5
-- containers >= 0.6.0.1
-- array
-- mtl >= 2.2.2
-- text
-- filepath
-- process
-- text-format
-- lens
-- extra
+  - base >= 4.7 && < 5
+  - containers >= 0.6.0.1
+  - array
+  - mtl >= 2.2.2
+  - text
+  - filepath
+  - process
+  - text-format
+  - lens
+  - extra
+  - pretty-simple
 
 library:
   source-dirs: src

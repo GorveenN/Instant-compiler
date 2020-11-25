@@ -25,7 +25,6 @@ exprPosition expr = case expr of
     EOr  pos _ _          -> pos
     ENewObject pos _      -> pos
     ENewArray pos _ _     -> pos
-    EMember   pos _ _     -> pos
-    EMemberCall pos _ _ _ -> pos
-    ENull pos             -> pos
+    EField   pos _ _     -> pos
+    EMethodCall pos _ _ _ -> pos
     ECast pos _           -> pos

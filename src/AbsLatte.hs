@@ -125,15 +125,14 @@ instance Functor Type where
         NonVoidType a nonvoidtype -> NonVoidType (f a) (fmap f nonvoidtype)
         Void a -> Void (f a)
 data Expr a
-    = ENewObject a (NonVoidType a)
-    | ENewArray a (Expr a) (Expr a)
-    | EMember a (Expr a) Ident
-    | EMemberCall a (Expr a) Ident [Expr a]
+    = ENewObject a (ScalarType a)
+    | ENewArray a (ScalarType a) (Expr a)
+    | EField a (Expr a) Ident
+    | EMethodCall a (Expr a) Ident [Expr a]
     | EVar a Ident
     | ELitInt a Integer
     | ELitTrue a
     | ELitFalse a
-    | ENull a
     | EString a String
     | EApp a Ident [Expr a]
     | EAccess a (Expr a) (Expr a)
@@ -149,15 +148,14 @@ data Expr a
 
 instance Functor Expr where
     fmap f x = case x of
-        ENewObject a nonvoidtype -> ENewObject (f a) (fmap f nonvoidtype)
-        ENewArray a expr1 expr2 -> ENewArray (f a) (fmap f expr1) (fmap f expr2)
-        EMember a expr ident -> EMember (f a) (fmap f expr) ident
-        EMemberCall a expr ident exprs -> EMemberCall (f a) (fmap f expr) ident (map (fmap f) exprs)
+        ENewObject a scalartype -> ENewObject (f a) (fmap f scalartype)
+        ENewArray a scalartype expr -> ENewArray (f a) (fmap f scalartype) (fmap f expr)
+        EField a expr ident -> EField (f a) (fmap f expr) ident
+        EMethodCall a expr ident exprs -> EMethodCall (f a) (fmap f expr) ident (map (fmap f) exprs)
         EVar a ident -> EVar (f a) ident
         ELitInt a integer -> ELitInt (f a) integer
         ELitTrue a -> ELitTrue (f a)
         ELitFalse a -> ELitFalse (f a)
-        ENull a -> ENull (f a)
         EString a string -> EString (f a) string
         EApp a ident exprs -> EApp (f a) ident (map (fmap f) exprs)
         EAccess a expr1 expr2 -> EAccess (f a) (fmap f expr1) (fmap f expr2)

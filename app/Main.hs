@@ -12,6 +12,7 @@ import           LexLatte
 import           ParLatte
 import           PrintLatte
 
+import Text.Pretty.Simple (pPrint)
 
 
 
@@ -48,7 +49,8 @@ run v p s =
 
 showTree :: (Show a, Print a) => Int -> a -> IO ()
 showTree v tree = do
-    putStrV v $ "\n[Abstract Syntax]\n\n" ++ show tree
+    -- putStrV v $ "\n[Abstract Syntax]\n\n" ++ pPrint tree
+    pPrint tree
     putStrV v $ "\n[Linearized tree]\n\n" ++ printTree tree
 
 usage :: IO ()

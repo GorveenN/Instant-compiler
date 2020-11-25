@@ -65,17 +65,16 @@ Void.           Type            ::= "void" ;
 
 -- Expressions ---------------------------------------------
 
-ENewObject.	Expr8 	::= "new" NonVoidType ;
-ENewArray.	Expr7 	::= Expr8 "[" Expr "]" ;
+ENewObject.	Expr6 	::= "new" ScalarType ;
+ENewArray.	Expr6 	::= "new" ScalarType "[" Expr "]" ;
 
-EMember.	Expr6 	::= Expr6 "." Ident ;
-EMemberCall.    Expr6 	::= Expr6 "." Ident "(" [Expr]")"  ;
+EField.        	Expr6 	::= Expr6 "." Ident ;
+EMethodCall.    Expr6 	::= Expr6 "." Ident "(" [Expr]")"  ;
 
 EVar. 		Expr6 	::= Ident ;
 ELitInt. 	Expr6   ::= Integer ;
 ELitTrue. 	Expr6   ::= "true" ;
 ELitFalse. 	Expr6   ::= "false" ;
-ENull. 		Expr6   ::= "null" ;
 EString. 	Expr6   ::= String ;
 
 EApp. 		Expr6   ::= Ident "(" [Expr] ")" ;
