@@ -17,8 +17,54 @@ import Control.Monad.State
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
+runSRE :: Show a => Program a -> Either (StaticException a) ()
+runSRE program@(Program _ topdefs) =
+  if Ident "main" `elem` map fst funs
+    then
+      runIdentity $
+        runExceptT
+          ( runReaderT
+              (evalStateT (checkProgram program) store)
+              ( StaticEnv
+                  { _varMap = Map.empty,
+                    _funMap = Map.fromList scopedFs,
+                    _classMap = Set.empty,
+                    _retType = T.Void,
+                    _nestLvl = 0
+                  }
+              )
+          )
+    else Left MainNotDefined
+  where
+    predefinedFs =
+      [ (Ident "printInt", (T.Void, [(T.TypeInt, Ident "x")])),
+        (Ident "printString", (T.Void, [(T.TypeStr, Ident "x")])),
+        (Ident "error", (T.Void, [])),
+        (Ident "readInt", (T.TypeInt, [])),
+        (Ident "readString", (T.TypeStr, []))
+      ]
+    scopedFs :: [(Ident, NestLvl)]
+    scopedFs = map (\(n, (_, _)) -> (n, 0)) predefinedFs
+    (funs, classes) = signatureTopDefList topdefs
+    store =
+      ( StaticStore
+          { _allFuns = Map.fromList $ predefinedFs ++ funs,
+            _allClasses = Map.fromList classes
+          }
+      )
+
+signatureTopDefList ::
+  Show a => [TopDef a] -> ([(Ident, Function)], [(Ident, ClassMeta)])
+signatureTopDefList (s : ss) = case s of
+  (TopClassDef _ c) -> (functions, signatureClass c : classes)
+  (TopFunDef _ f) -> (signatureFunction f : functions, classes)
+  where
+    (functions, classes) = signatureTopDefList ss
+signatureTopDefList [] = ([], [])
+
 checkProgram :: Show a => Program a -> ERT a ()
-checkProgram (Program _ topdefs) = checkList checkTopDef topdefs
+checkProgram (Program _ topdefs) = do
+  checkList checkTopDef topdefs
 
 checkList :: Show a => (b -> ERT a (StaticEnv -> StaticEnv)) -> [b] -> ERT a ()
 checkList fun (s : ss) = do
@@ -34,12 +80,17 @@ checkTopDef x = case x of
 
 checkFnDef :: Show a => FnDef a -> ERT a (StaticEnv -> StaticEnv)
 checkFnDef x = case x of
-  FnDef _ type_ ident_ args_ block_ -> do
+  FnDef pos type_ ident_ args_ block_ -> do
     args <- checkArgList args_
-    checkType type_
+    rett <- checkType type_
     lvl <- asks _nestLvl
     let argF = foldr ((.) . (\(t, i) -> Map.insert i (t, lvl + 1))) id args
-    local (over nestLvl (+ 2) . over varMap argF) (checkBlock block_)
+    returns <-
+      local
+        (over nestLvl (+ 2) . over varMap argF . set retType rett)
+        (checkBlock block_)
+    when (rett /= T.Void && not returns) $ throwError (NoReturn pos ident_)
+
     return (over funMap $ Map.insert ident_ lvl)
 
 checkArgList :: Show a => [Arg a] -> ERT a [(T.Type, Ident)]
@@ -75,7 +126,7 @@ checkClassBlock :: Show a => ClassBlock a -> ERT a (StaticEnv -> StaticEnv)
 checkClassBlock x = case x of
   ClassBlock _ classmembers -> do
     let fields = filter isField classmembers
-    let methods = filter isField classmembers
+    let methods = filter isMethod classmembers
     checkList checkClassMember $ fields ++ methods
     return id
 
@@ -83,7 +134,12 @@ checkClassDef :: Show a => ClassDef a -> ERT a (StaticEnv -> StaticEnv)
 checkClassDef x = case x of
   Class pos name classblock -> do
     throwIfClassDefined name pos
-    checkClassBlock classblock
+    lvl <- asks _nestLvl
+    let self =
+          over
+            varMap
+            (Map.insert (Ident "self") (T.TypeClass name, lvl + 1))
+    local (over nestLvl (+ 1) . self) $ checkClassBlock classblock
     return (over classMap (Set.insert name))
   ClassInh pos name supername classblock -> do
     -- TODO run with all parent methods/field
@@ -92,7 +148,6 @@ checkClassDef x = case x of
     when cycle $ throwError $ CyclicInheritance pos name
     (fields, methods) <- superFieldsMethods supername
     lvl <- asks _nestLvl
-    -- let fieldsF = map (\(i, t) -> over varMap (Map.insert i (t, lvl + 1))) fields
     let fieldsF =
           foldr
             ((.) . \(i, t) -> over varMap (Map.insert i (t, lvl + 1)))
@@ -103,7 +158,13 @@ checkClassDef x = case x of
             ((.) . \i -> over funMap (Map.insert i (lvl + 1)))
             id
             methods
-    local (fieldsF . methodsF) $ checkClassBlock classblock
+
+    let self =
+          over
+            varMap
+            (Map.insert (Ident "self") (T.TypeClass name, lvl + 2))
+    local (fieldsF . methodsF . self . over nestLvl (+ 2)) $
+      checkClassBlock classblock
     return (over classMap (Set.insert name))
 
 superFieldsMethods :: Show a => Ident -> ERT a ([(Ident, T.Type)], [Ident])
@@ -138,8 +199,8 @@ superclass _ _ = do
   return False
 
 isField x = case x of
-  (ClassMethod _ _) -> True
-  _ -> False
+  (ClassMethod _ _) -> False
+  _ -> True
 
 isMethod = not . isField
 
@@ -156,12 +217,15 @@ checkDeclList _ [] ss = checkStmtList ss
 
 checkItem :: Show a => T.Type -> Item a -> ERT a (StaticEnv -> StaticEnv)
 checkItem t x = case x of
-  NoInit _ ident -> do
+  NoInit pos ident -> do
     lvl <- asks _nestLvl
+    throwIfVariableDefined ident pos
     return (over varMap (Map.insert ident (t, lvl)))
   Init pos ident expr -> do
+    throwIfVariableDefined ident pos
     exprt <- checkExpr expr
-    unless (t == exprt) $ throwError $ TypeMismatch pos t exprt
+    super <- exprt `superclass` t
+    unless (t == exprt || super) $ throwError $ TypeMismatch pos t exprt
     lvl <- asks _nestLvl
     return (over varMap (Map.insert ident (t, lvl)))
 
@@ -176,6 +240,7 @@ checkStmtList [] = return False
 isLvalue :: Expr a -> Bool
 isLvalue EField {} = True
 isLvalue EVar {} = True
+isLvalue EAccess {} = True
 isLvalue _ = False
 
 checkStmt :: Show a => Stmt a -> ERT a Bool
@@ -394,7 +459,7 @@ _throwSymbol f1 f2 var pos = do
   f2 pos var a
 
 _throwJust :: Show a => a -> Ident -> Maybe b -> ERT a ()
-_throwJust pos var (Just _) = throwError $ SymbolNotDefined pos var
+_throwJust pos var (Just _) = throwError $ RedefinitionOfSymbol pos var
 _throwJust _ _ Nothing = return ()
 
 _throwNothing _ _ (Just _) = return ()
@@ -412,12 +477,12 @@ throwIfMethodDefined = _throwSymbol _funMap _throwJust
 throwIfClassDefined :: Show a => Ident -> a -> ERT a ()
 throwIfClassDefined var pos = do
   a <- asks $ Set.member var . _classMap
-  unless a $ throwError $ RedefinitionOfSymbol pos var
+  when a $ throwError $ RedefinitionOfSymbol pos var
 
 throwIfClassNotDefined :: Show a => Ident -> a -> ERT a ()
 throwIfClassNotDefined var pos = do
-  a <- asks $ Set.member var . _classMap
-  unless a $ throwError $ RedefinitionOfSymbol pos var
+  a <- gets $ Map.member var . _allClasses
+  unless a $ throwError $ TypeNotDefined pos $ T.TypeClass var
 
 signatureType :: Show a => Type a -> T.Type
 signatureType x = case x of
@@ -447,15 +512,15 @@ signatureClass x = case x of
   ClassInh _ name supername (ClassBlock _ members) ->
     (name, toClassMeta members (Just supername))
   where
-    fields members =
+    fields mem =
       concatMap
         ( \(ClassField _ t idents) ->
             zip idents (repeat $ signatureType t)
         )
-        $ filter isField members
-    methods members =
+        $ filter isField mem
+    methods mem =
       map (\(ClassMethod _ fndef) -> signatureFunction fndef) $
-        filter isMethod members
+        filter isMethod mem
     toClassMeta ms ss =
       ClassMeta
         { _fields = Map.fromList $ fields ms,
@@ -473,29 +538,39 @@ checkIdentUnique list = do
         then throwError (RedefinitionOfSymbol p n)
         else return $ (n, p) : acc
 
+-- TODO lookup superclass
 getMethodType :: Show a => a -> T.Type -> Ident -> ERT a Function
 getMethodType pos cls@(T.TypeClass className) methodName = do
-  ClassMeta {_methods = methodsMap} <-
+  ClassMeta {_methods = methodsMap, _super = super} <-
     gets (Map.lookup className . _allClasses)
       >>= lookupFail (TypeNotDefined pos cls)
   case Map.lookup methodName methodsMap of
     (Just t) -> return t
-    _ -> throwError $ MethodNotInScope pos cls methodName
-
-methodType pos className methodName =
+    _ -> do
+      case super of
+        Just sname -> getMethodType pos (T.TypeClass sname) methodName
+        _ -> throwError $ MethodNotInScope pos cls methodName
+getMethodType pos className methodName =
   throwError $ MethodNotInScope pos className methodName
 
+-- TODO lookup superclass
 getFieldType :: Show a => a -> T.Type -> Ident -> ERT a T.Type
 getFieldType pos cls@(T.TypeClass className) fieldName = do
-  ClassMeta {_fields = fieldsMap} <-
+  ClassMeta {_fields = fieldsMap, _super = super} <-
     gets (Map.lookup className . _allClasses)
       >>= lookupFail (TypeNotDefined pos cls)
   case Map.lookup fieldName fieldsMap of
     (Just t) -> return t
-    _ -> throwError $ FieldNotInScope pos cls fieldName
-
-fieldType pos className fieldName =
-  throwError $ FieldNotInScope pos className fieldName
+    _ -> do
+      case super of
+        Just sname -> getFieldType pos (T.TypeClass sname) fieldName
+        _ -> throwError $ FieldNotInScope pos cls fieldName
+getFieldType pos t@(T.TypeArray _) fieldName =
+  if fieldName == Ident "length"
+    then return T.TypeInt
+    else throwError $ FieldNotInScope pos t fieldName
+getFieldType pos type_ fieldName =
+  throwError $ FieldNotInScope pos type_ fieldName
 
 typeDefined :: Show a => T.Type -> ERT a Bool
 typeDefined (T.TypeArray t) = typeDefined t
@@ -504,5 +579,5 @@ typeDefined _ = return True
 
 lookupFail err = maybe (throwError err) return
 
-memberFail err True = throwError err
-memberFail _ False = return False
+memberFail _ True = return False
+memberFail err False = throwError err

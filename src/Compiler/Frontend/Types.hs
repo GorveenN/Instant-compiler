@@ -20,6 +20,7 @@ data StaticStore = StaticStore
   { _allFuns :: FunMap,
     _allClasses :: ClassMap
   }
+  deriving (Show)
 
 data StaticEnv = StaticEnv
   -- { _varMap :: VarMap -- used to track redefinition of symbol
@@ -29,12 +30,14 @@ data StaticEnv = StaticEnv
     _retType :: RetType,
     _nestLvl :: NestLvl
   }
+  deriving (Show)
 
 data ClassMeta = ClassMeta
   { _fields :: Map.Map Ident Field,
     _methods :: Map.Map Ident Function,
     _super :: Maybe Ident
   }
+  deriving (Show)
 
 -- type ERT a r = ReaderT StaticEnv (Except (StaticException a)) r
 
@@ -76,56 +79,58 @@ data StaticException a
   | NewOnNonClassType a T.Type
   | CyclicInheritance a Ident
   | MainNotDefined
+  deriving (Show)
 
-instance Show (StaticException (Maybe (Int, Int))) where
-  show (VariableNotInScope (Just (line, column)) ident) =
-    positionString line column
-      ++ "Variable "
-      ++ show ident
-      ++ " not in scope."
-  show (FunctionNotInScope (Just (line, column)) ident) =
-    positionString line column
-      ++ "Function "
-      ++ show ident
-      ++ " not in scope."
-  show (TypeMismatch (Just (line, column)) expected actual) =
-    positionString line column
-      ++ "Tried to use expresion of type "
-      ++ show actual
-      ++ " where expression of type "
-      ++ show expected
-      ++ " was expected."
-  show (CompareDifferentTypes (Just (line, column)) t1 t2) =
-    positionString line column
-      ++ "Tried to compare expression of type "
-      ++ show t1
-      ++ " with expression of type "
-      ++ show t2
-      ++ "."
-  show (NonIndexable (Just (line, column)) t) =
-    positionString line column
-      ++ "Tried to index expression of type "
-      ++ show t
-      ++ "."
-  show (RedefinitionOfSymbol (Just (line, column)) name) =
-    positionString line column
-      ++ "Multiple declarations of variable "
-      ++ show name
-      ++ "."
-  show (NoReturn (Just (line, column)) name) =
-    positionString line column
-      ++ "Function "
-      ++ show name
-      ++ " does not return in all execution paths."
-  show (WrongNumberOfArguments (Just (line, column)) expected actual) =
-    positionString line column
-      ++ "Called function with wrong number of arguments, expected: "
-      ++ show expected
-      ++ ", provided: "
-      ++ show actual
-      ++ "."
-  show MainNotDefined = "Error: main function not defined."
-  show _ = "Udefined show"
+-- instance Show (StaticException (Maybe (Int, Int))) where
+--   show (TypeNotDefined {}) = "Type not defined"
+--   show (VariableNotInScope (Just (line, column)) ident) =
+--     positionString line column
+--       ++ "Variable "
+--       ++ show ident
+--       ++ " not in scope."
+--   show (FunctionNotInScope (Just (line, column)) ident) =
+--     positionString line column
+--       ++ "Function "
+--       ++ show ident
+--       ++ " not in scope."
+--   show (TypeMismatch (Just (line, column)) expected actual) =
+--     positionString line column
+--       ++ "Tried to use expresion of type "
+--       ++ show actual
+--       ++ " where expression of type "
+--       ++ show expected
+--       ++ " was expected."
+--   show (CompareDifferentTypes (Just (line, column)) t1 t2) =
+--     positionString line column
+--       ++ "Tried to compare expression of type "
+--       ++ show t1
+--       ++ " with expression of type "
+--       ++ show t2
+--       ++ "."
+--   show (NonIndexable (Just (line, column)) t) =
+--     positionString line column
+--       ++ "Tried to index expression of type "
+--       ++ show t
+--       ++ "."
+--   show (RedefinitionOfSymbol (Just (line, column)) name) =
+--     positionString line column
+--       ++ "Multiple declarations of variable "
+--       ++ show name
+--       ++ "."
+--   show (NoReturn (Just (line, column)) name) =
+--     positionString line column
+--       ++ "Function "
+--       ++ show name
+--       ++ " does not return in all execution paths."
+--   show (WrongNumberOfArguments (Just (line, column)) expected actual) =
+--     positionString line column
+--       ++ "Called function with wrong number of arguments, expected: "
+--       ++ show expected
+--       ++ ", provided: "
+--       ++ show actual
+--       ++ "."
+--   show MainNotDefined = "Error: main function not defined."
+--   show _ = "Udefined show"
 
 positionString :: Int -> Int -> [Char]
 positionString line column =
