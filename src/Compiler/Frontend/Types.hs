@@ -39,9 +39,9 @@ data ClassMeta = ClassMeta
   }
   deriving (Show)
 
--- type ERT a r = ReaderT StaticEnv (Except (StaticException a)) r
+-- type SRE a r = ReaderT StaticEnv (Except (StaticException a)) r
 
-type ERT a r =
+type SRE a r =
   StateT StaticStore (ReaderT StaticEnv (Except (StaticException a))) r
 
 type Function = (T.Type, [(T.Type, Ident)])
