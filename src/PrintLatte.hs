@@ -92,7 +92,7 @@ instance Print (TopDef a) where
   prt i e = case e of
     TopClassDef _ classdef -> prPrec i 0 (concatD [prt 0 classdef])
     TopFunDef _ fndef -> prPrec i 0 (concatD [prt 0 fndef])
-  prtList _ [x] = (concatD [prt 0 x])
+  prtList _ [] = (concatD [])
   prtList _ (x:xs) = (concatD [prt 0 x, prt 0 xs])
 instance Print (FnDef a) where
   prt i e = case e of
@@ -108,7 +108,7 @@ instance Print (ClassMember a) where
   prt i e = case e of
     ClassField _ type_ ids -> prPrec i 0 (concatD [prt 0 type_, prt 0 ids, doc (showString ";")])
     ClassMethod _ fndef -> prPrec i 0 (concatD [prt 0 fndef])
-  prtList _ [x] = (concatD [prt 0 x])
+  prtList _ [] = (concatD [])
   prtList _ (x:xs) = (concatD [prt 0 x, prt 0 xs])
 instance Print (ClassBlock a) where
   prt i e = case e of
