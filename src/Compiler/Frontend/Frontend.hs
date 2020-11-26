@@ -11,24 +11,11 @@ import Control.Lens hiding
   ( Empty,
     element,
   )
-import Control.Lens.TH
-import Control.Monad (foldM)
 import Control.Monad.Except
-import Control.Monad.Extra (concatMapM)
 import Control.Monad.Reader
 import Control.Monad.State
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import ErrM
-
-type Result = Err String
-
-failure :: Show a => a -> Result
-failure x = Bad $ "Undefined case: " ++ show x
-
-checkIdent :: Ident -> String
-checkIdent x = case x of
-  Ident string -> string
 
 checkProgram :: Show a => Program a -> ERT a ()
 checkProgram (Program _ topdefs) = checkList checkTopDef topdefs
@@ -106,8 +93,16 @@ checkClassDef x = case x of
     (fields, methods) <- superFieldsMethods supername
     lvl <- asks _nestLvl
     -- let fieldsF = map (\(i, t) -> over varMap (Map.insert i (t, lvl + 1))) fields
-    let fieldsF = foldr ((.) . \(i, t) -> over varMap (Map.insert i (t, lvl + 1))) id fields
-    let methodsF = foldr ((.) . \i -> over funMap (Map.insert i (lvl + 1))) id methods
+    let fieldsF =
+          foldr
+            ((.) . \(i, t) -> over varMap (Map.insert i (t, lvl + 1)))
+            id
+            fields
+    let methodsF =
+          foldr
+            ((.) . \i -> over funMap (Map.insert i (lvl + 1)))
+            id
+            methods
     local (fieldsF . methodsF) $ checkClassBlock classblock
     return (over classMap (Set.insert name))
 
@@ -174,21 +169,9 @@ checkBlock :: Show a => Block a -> ERT a Bool
 checkBlock (Block _ stmts) = local (over nestLvl (+ 1)) (checkStmtList stmts)
 
 checkStmtList :: Show a => [Stmt a] -> ERT a Bool
-checkStmtList (decl@(Decl {}) : ss) = checkStmtDecl decl ss
+checkStmtList (decl@Decl {} : ss) = checkStmtDecl decl ss
 checkStmtList (s : ss) = liftM2 (||) (checkStmt s) (checkStmtList ss)
 checkStmtList [] = return False
-
--- superclass :: Show a => T.Type -> T.Type -> ERT a Bool
--- superclass (T.TypeClass t1) (T.TypeClass t2) = do
---     a <- gets (Map.lookup t1 . _allClasses)
---     case a of
---         Just ClassMeta { _super = Just super } -> do
---             if super == t2
---                 then return True
---                 else superclass (T.TypeClass super) (T.TypeClass t2)
---         _ -> return False
--- superclass _ _ = do
---     return False
 
 isLvalue :: Expr a -> Bool
 isLvalue EField {} = True
@@ -364,9 +347,6 @@ checkExpr x = case x of
     isInt T.TypeInt = True
     isInt _ = False
 
-getSuperMembers :: Ident -> [ClassMeta]
-getSuperMembers = undefined
-
 throwIfWrongType :: Show a => Expr a -> T.Type -> ERT a T.Type
 throwIfWrongType expr ttype = do
   t <- checkExpr expr
@@ -377,9 +357,6 @@ throwIfTypeNotDefined :: Show a => a -> T.Type -> ERT a ()
 throwIfTypeNotDefined p t = do
   defined <- typeDefined t
   unless defined $ throwError (TypeNotDefined p t)
-
-throwIfSymbolNotDefined :: Show a => a -> Ident -> ERT a ()
-throwIfSymbolNotDefined = undefined
 
 throwIfArgumentsMismatch ::
   Show a => a -> [T.Type] -> [Expr a] -> ERT a [T.Type]
@@ -432,9 +409,6 @@ throwIfVariableNotDefined = _throwSymbol _varMap _throwNothing
 throwIfMethodDefined :: Show a => Ident -> a -> ERT a ()
 throwIfMethodDefined = _throwSymbol _funMap _throwJust
 
-throwIfMethodNotDefined :: Show a => Ident -> a -> ERT a ()
-throwIfMethodNotDefined = _throwSymbol _funMap _throwNothing
-
 throwIfClassDefined :: Show a => Ident -> a -> ERT a ()
 throwIfClassDefined var pos = do
   a <- asks $ Set.member var . _classMap
@@ -445,8 +419,49 @@ throwIfClassNotDefined var pos = do
   a <- asks $ Set.member var . _classMap
   unless a $ throwError $ RedefinitionOfSymbol pos var
 
-signatureFunction :: Show a => FnDef a -> ERT a (Ident, Function)
-signatureFunction = undefined
+signatureType :: Show a => Type a -> T.Type
+signatureType x = case x of
+  NonVoidType _ nonvoidtype -> signatureNonVoidType nonvoidtype
+  Void _ -> T.Void
+
+signatureScalarType :: Show a => ScalarType a -> T.Type
+signatureScalarType x = case x of
+  ClassType _ ident -> T.TypeClass ident
+  Int _ -> T.TypeInt
+  Str _ -> T.TypeStr
+  Bool _ -> T.TypeBool
+
+signatureNonVoidType :: Show a => NonVoidType a -> T.Type
+signatureNonVoidType x = case x of
+  ArrayType _ scalartype -> T.TypeArray $ signatureScalarType scalartype
+  ScalarType _ scalartype -> signatureScalarType scalartype
+
+signatureFunction :: Show a => FnDef a -> (Ident, Function)
+signatureFunction (FnDef _ t name args _) = (name, (signatureType t, argtypes))
+  where
+    argtypes = map (\(Arg _ t n) -> (signatureNonVoidType t, n)) args
+
+signatureClass :: Show a => ClassDef a -> (Ident, ClassMeta)
+signatureClass x = case x of
+  Class _ name (ClassBlock _ members) -> (name, toClassMeta members Nothing)
+  ClassInh _ name supername (ClassBlock _ members) ->
+    (name, toClassMeta members (Just supername))
+  where
+    fields members =
+      concatMap
+        ( \(ClassField _ t idents) ->
+            zip idents (repeat $ signatureType t)
+        )
+        $ filter isField members
+    methods members =
+      map (\(ClassMethod _ fndef) -> signatureFunction fndef) $
+        filter isMethod members
+    toClassMeta ms ss =
+      ClassMeta
+        { _fields = Map.fromList $ fields ms,
+          _methods = Map.fromList $ methods ms,
+          _super = ss
+        }
 
 checkIdentUnique :: Show a => [(Ident, a)] -> ERT a ()
 checkIdentUnique list = do
