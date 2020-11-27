@@ -6,7 +6,6 @@ module Compiler.Frontend.Frontend where
 import AbsLatte
 import qualified Compiler.Backend.Tree as T
 import Compiler.Frontend.Types
-import Compiler.Frontend.Utils
 import Control.Lens hiding
   ( Empty,
     element,
@@ -82,6 +81,7 @@ checkTopDef x = case x of
 checkFnDef :: Show a => FnDef a -> SRE a (StaticEnv -> StaticEnv)
 checkFnDef x = case x of
   FnDef pos type_ ident_ args_ block_ -> do
+    throwIfFunctionDefined ident_ pos
     args <- checkArgList args_
     rett <- checkType type_
     lvl <- asks _nestLvl
@@ -109,14 +109,94 @@ checkArg (Arg pos nonvoidtype ident) = do
 detectInheritanceCycle :: Show a => Ident -> SRE a Bool
 detectInheritanceCycle name = superclass (T.TypeClass name) (T.TypeClass name)
 
+data ConstExpr = ConstString String | ConstInteger Integer | ConstBool Bool deriving (Eq, Ord)
+
+constExpr :: Show a => Expr a -> SRE a (Maybe ConstExpr)
+constExpr x = case x of
+  ELitInt _ i -> do
+    return $ Just (ConstInteger i)
+  ELitTrue _ -> do
+    return $ Just (ConstBool True)
+  ELitFalse _ -> do
+    return $ Just (ConstBool False)
+  EString _ s -> do
+    return $ Just (ConstString s)
+  Neg _ expr -> do
+    e <- constExpr expr
+    case e of
+      (Just (ConstInteger i)) -> return $ Just (ConstInteger (- i))
+      _ -> return Nothing
+  Not _ expr -> do
+    e <- constExpr expr
+    case e of
+      (Just (ConstBool i)) -> return $ Just (ConstBool (not i))
+      _ -> return Nothing
+  EMul _ expr1 mulop expr2 -> do
+    e1 <- constExpr expr1
+    e2 <- constExpr expr2
+    case (e1, e2) of
+      (Just (ConstInteger i1), Just (ConstInteger i2)) -> do
+        case mulop of
+          Times _ -> return $ Just (ConstInteger (i1 * i2))
+          Mod _ -> return $ Just (ConstInteger (mod i1 i2))
+          Div _ ->
+            if i2 == 0
+              then return Nothing
+              else return $ Just (ConstInteger (div i1 i2))
+      _ -> return Nothing
+  EAdd _ expr1 addop expr2 -> do
+    e1 <- constExpr expr1
+    e2 <- constExpr expr2
+    case (e1, e2) of
+      (Just (ConstInteger i1), Just (ConstInteger i2)) -> do
+        case addop of
+          Plus _ -> return $ Just (ConstInteger (i1 + i2))
+          Minus _ -> return $ Just (ConstInteger (i1 - i2))
+      (Just (ConstString i1), Just (ConstString i2)) -> case addop of
+        Plus _ -> return $ Just (ConstString (i1 ++ i2))
+        _ -> return Nothing
+      _ -> return Nothing
+  ERel _ expr1 relop expr2 -> do
+    e1 <- constExpr expr1
+    e2 <- constExpr expr2
+    let op = relopToF relop
+    case (e1, e2) of
+      (Just (ConstInteger i1), Just (ConstInteger i2)) ->
+        return $ Just (ConstBool (op i1 i2))
+      _ -> return Nothing
+  EAnd _ expr1 expr2 -> do
+    e1 <- constExpr expr1
+    e2 <- constExpr expr2
+    case (e1, e2) of
+      (Just (ConstBool i1), Just (ConstBool i2)) ->
+        return $ Just (ConstBool (i1 && i2))
+      _ -> return Nothing
+  EOr _ expr1 expr2 -> do
+    e1 <- constExpr expr1
+    e2 <- constExpr expr2
+    case (e1, e2) of
+      (Just (ConstBool i1), Just (ConstBool i2)) ->
+        return $ Just (ConstBool (i1 || i2))
+      _ -> return Nothing
+  _ -> return Nothing
+  where
+    relopToF op = case op of
+      LTH _ -> (<)
+      LE _ -> (<=)
+      GTH _ -> (>)
+      GE _ -> (>=)
+      EQU _ -> (==)
+      NE _ -> (/=)
+
 checkClassMember :: Show a => ClassMember a -> SRE a (StaticEnv -> StaticEnv)
 checkClassMember x = case x of
   ClassField pos type_ idents -> do
     ttype <- checkType type_
+    when (ttype == T.Void) $ throwError (VoidField pos)
     let zipped = zip idents $ repeat pos
     lvl <- asks _nestLvl
     checkIdentUnique zipped
-    mapM_ (uncurry throwIfMethodDefined) zipped
+    mapM_ (uncurry throwIfFunctionDefined) zipped
     mapM_ (uncurry throwIfVariableDefined) zipped
     let functions =
           map (\x -> over varMap (Map.insert x (ttype, lvl))) idents
@@ -218,8 +298,8 @@ checkDeclList _ [] ss = checkStmtList ss
 checkItem :: Show a => T.Type -> Item a -> SRE a (StaticEnv -> StaticEnv)
 checkItem t x = case x of
   NoInit pos ident -> do
-    lvl <- asks _nestLvl
     throwIfVariableDefined ident pos
+    lvl <- asks _nestLvl
     return (over varMap (Map.insert ident (t, lvl)))
   Init pos ident expr -> do
     throwIfVariableDefined ident pos
@@ -277,7 +357,13 @@ checkStmt x = case x of
     checkStmt (CondElse pos expr stmt (Empty pos))
   CondElse _ expr stmt1 stmt2 -> do
     throwIfWrongType expr T.TypeBool
-    liftM2 (&&) (checkStmt stmt1) (checkStmt stmt2)
+    constE <- constExpr expr
+    s1 <- checkStmt stmt1
+    s2 <- checkStmt stmt2
+    case constE of
+      Just (ConstBool True) -> return s1
+      Just (ConstBool False) -> return s2
+      _ -> return $ s1 && s2
   While _ expr stmt -> do
     throwIfWrongType expr T.TypeBool
     checkStmt stmt
@@ -368,12 +454,7 @@ checkExpr x = case x of
     arrType <- checkExpr indexed
     case arrType of
       T.TypeArray a -> return a
-      t ->
-        throwError $
-          TypeMismatch
-            pos
-            (T.TypeArray (T.TypeClass (Ident "Any")))
-            t
+      t -> throwError $ NonIndexable pos t
   ECast pos ident -> do
     ifM
       (gets (Map.member ident . _allClasses))
@@ -467,13 +548,25 @@ _throwNothing _ _ (Just _) = return ()
 _throwNothing pos var Nothing = throwError $ SymbolNotDefined pos var
 
 throwIfVariableDefined :: Show a => Ident -> a -> SRE a ()
-throwIfVariableDefined = _throwSymbol _varMap _throwJust
+throwIfVariableDefined name pos = do
+  a <- asks $ Map.lookup name . _varMap
+  case a of
+    (Just (_, vlvl)) -> do
+      lvl <- asks _nestLvl
+      when (lvl == vlvl) $ throwError (RedefinitionOfSymbol pos name)
+    _ -> return ()
 
 throwIfVariableNotDefined :: Show a => Ident -> a -> SRE a ()
 throwIfVariableNotDefined = _throwSymbol _varMap _throwNothing
 
-throwIfMethodDefined :: Show a => Ident -> a -> SRE a ()
-throwIfMethodDefined = _throwSymbol _funMap _throwJust
+throwIfFunctionDefined :: Show a => Ident -> a -> SRE a ()
+throwIfFunctionDefined name pos = do
+  a <- asks $ Map.lookup name . _funMap
+  case a of
+    (Just vlvl) -> do
+      lvl <- asks _nestLvl
+      when (lvl == vlvl) $ throwError (RedefinitionOfSymbol pos name)
+    _ -> return ()
 
 throwIfClassDefined :: Show a => Ident -> a -> SRE a ()
 throwIfClassDefined var pos = do
@@ -580,3 +673,25 @@ lookupFail err = maybe (throwError err) return
 
 memberFail _ True = return False
 memberFail err False = throwError err
+
+exprPosition :: Expr a -> a
+exprPosition expr = case expr of
+  EVar pos _ -> pos
+  ELitInt pos _ -> pos
+  ELitTrue pos -> pos
+  ELitFalse pos -> pos
+  EApp pos _ _ -> pos
+  EString pos _ -> pos
+  EAccess pos _ _ -> pos
+  Neg pos _ -> pos
+  Not pos _ -> pos
+  EMul pos _ _ _ -> pos
+  EAdd pos _ _ _ -> pos
+  ERel pos _ _ _ -> pos
+  EAnd pos _ _ -> pos
+  EOr pos _ _ -> pos
+  ENewObject pos _ -> pos
+  ENewArray pos _ _ -> pos
+  EField pos _ _ -> pos
+  EMethodCall pos _ _ _ -> pos
+  ECast pos _ -> pos
