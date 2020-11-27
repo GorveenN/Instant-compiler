@@ -12,6 +12,7 @@ import Control.Lens hiding
     element,
   )
 import Control.Monad.Except
+import Control.Monad.Extra (ifM)
 import Control.Monad.Reader
 import Control.Monad.State
 import qualified Data.Map as Map
@@ -142,7 +143,6 @@ checkClassDef x = case x of
     local (over nestLvl (+ 1) . self) $ checkClassBlock classblock
     return (over classMap (Set.insert name))
   ClassInh pos name supername classblock -> do
-    -- TODO run with all parent methods/field
     throwIfClassDefined name pos
     cycle <- detectInheritanceCycle name
     when cycle $ throwError $ CyclicInheritance pos name
@@ -375,9 +375,10 @@ checkExpr x = case x of
             (T.TypeArray (T.TypeClass (Ident "Any")))
             t
   ECast pos ident -> do
-    gets (Map.member ident . _allClasses)
-      >>= memberFail (SymbolNotDefined pos ident)
-    return $ T.TypeClass ident
+    ifM
+      (gets (Map.member ident . _allClasses))
+      (return $ T.TypeClass ident)
+      (throwError $ SymbolNotDefined pos ident)
   Neg _ expr -> throwIfWrongType expr T.TypeInt
   Not _ expr -> throwIfWrongType expr T.TypeBool
   EMul _ expr1 _ expr2 -> throwIfWrong2Types T.TypeInt expr1 expr2
@@ -538,7 +539,6 @@ checkIdentUnique list = do
         then throwError (RedefinitionOfSymbol p n)
         else return $ (n, p) : acc
 
--- TODO lookup superclass
 getMethodType :: Show a => a -> T.Type -> Ident -> SRE a Function
 getMethodType pos cls@(T.TypeClass className) methodName = do
   ClassMeta {_methods = methodsMap, _super = super} <-
@@ -553,7 +553,6 @@ getMethodType pos cls@(T.TypeClass className) methodName = do
 getMethodType pos className methodName =
   throwError $ MethodNotInScope pos className methodName
 
--- TODO lookup superclass
 getFieldType :: Show a => a -> T.Type -> Ident -> SRE a T.Type
 getFieldType pos cls@(T.TypeClass className) fieldName = do
   ClassMeta {_fields = fieldsMap, _super = super} <-
