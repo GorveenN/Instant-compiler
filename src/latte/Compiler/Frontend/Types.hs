@@ -20,12 +20,12 @@ data StaticStore = StaticStore
   deriving (Show)
 
 data StaticEnv = StaticEnv
-  -- { _varMap :: VarMap -- used to track redefinition of symbol
   { _varMap :: VarMap, -- used to track redefinition of symbol
     _funMap :: Map.Map Ident NestLvl, -- used to track redefinition of symbol
     _classMap :: Set.Set Ident, -- used to track redefinition of symbol
     _retType :: RetType,
-    _nestLvl :: NestLvl
+    _nestLvl :: NestLvl,
+    _inClass :: Maybe Ident
   }
   deriving (Show)
 
@@ -35,8 +35,6 @@ data ClassMeta = ClassMeta
     _super :: Maybe Ident
   }
   deriving (Show)
-
--- type SRE a r = ReaderT StaticEnv (Except (StaticException a)) r
 
 type SRE a r =
   StateT StaticStore (ReaderT StaticEnv (Except (StaticException a))) r
@@ -58,10 +56,12 @@ type ClassMap = Map.Map Ident ClassMeta
 data StaticException a
   = AddNonAddable a T.Type T.Type
   | AssignmentToRValue a
+  | ClassNotInScope a Ident
   | CompareDifferentTypes a T.Type T.Type
   | CyclicInheritance a Ident
   | FieldNotInScope a T.Type Ident
   | FunctionNotInScope a Ident
+  | LiteralOverflow a
   | LogicOperationOnNonBooleans a T.Type T.Type
   | MainNotDefined
   | MethodNotInScope a T.Type Ident
@@ -70,6 +70,7 @@ data StaticException a
   | NonComparableTypes a T.Type T.Type
   | NonIndexable a T.Type
   | RedefinitionOfSymbol a Ident
+  | ReturnVoid a
   | SymbolNotDefined a Ident
   | TypeMismatch a T.Type T.Type
   | TypeNotDefined a T.Type
@@ -94,6 +95,8 @@ instance Show (StaticException (Maybe (Int, Int))) where
       ++ " and "
       ++ show t2
       ++ "."
+  show (ClassNotInScope (Just (line, column)) i) =
+    positionString line column ++ "Class " ++ show i ++ " not in scope."
   show (CyclicInheritance (Just (line, column)) i) =
     positionString line column
       ++ "Cycling inheritence including "
@@ -108,6 +111,8 @@ instance Show (StaticException (Maybe (Int, Int))) where
       ++ "."
   show (FunctionNotInScope (Just (line, column)) i) =
     positionString line column ++ "Function " ++ show i ++ " not in scope."
+  show (LiteralOverflow (Just (line, column))) =
+    positionString line column ++ "Literal overflow."
   show (LogicOperationOnNonBooleans (Just (line, column)) t1 t2) =
     positionString line column
       ++ "Logic operation on "
@@ -143,6 +148,8 @@ instance Show (StaticException (Maybe (Int, Int))) where
     positionString line column ++ show t ++ "can not be indexed."
   show (RedefinitionOfSymbol (Just (line, column)) i) =
     positionString line column ++ "Redefinition of symbol " ++ show i ++ "."
+  show (ReturnVoid (Just (line, column))) =
+    positionString line column ++ "Can't return value of type void."
   show (SymbolNotDefined (Just (line, column)) i) =
     positionString line column ++ "Symbol " ++ show i ++ " not defined."
   show (TypeMismatch (Just (line, column)) t1 t2) =
@@ -170,58 +177,12 @@ instance Show (StaticException (Maybe (Int, Int))) where
       ++ show i2
       ++ " were/was provided."
 
--- show (TypeNotDefined {}) = "Type not defined"
--- show (VariableNotInScope (Just (line, column)) ident) =
---   positionString line column
---     ++ "Variable "
---     ++ show ident
---     ++ " not in scope."
--- show (FunctionNotInScope (Just (line, column)) ident) =
---   positionString line column
---     ++ "Function "
---     ++ show ident
---     ++ " not in scope."
--- show (TypeMismatch (Just (line, column)) expected actual) =
---   positionString line column
---     ++ "Tried to use expresion of type "
---     ++ show actual
---     ++ " where expression of type "
---     ++ show expected
---     ++ " was expected."
--- show (CompareDifferentTypes (Just (line, column)) t1 t2) =
---   positionString line column
---     ++ "Tried to compare expression of type "
---     ++ show t1
---     ++ " with expression of type "
---     ++ show t2
---     ++ "."
--- show (NonIndexable (Just (line, column)) t) =
---   positionString line column
---     ++ "Tried to index expression of type "
---     ++ show t
---     ++ "."
--- show (RedefinitionOfSymbol (Just (line, column)) name) =
---   positionString line column
---     ++ "Multiple declarations of variable "
---     ++ show name
---     ++ "."
--- show (NoReturn (Just (line, column)) name) =
---   positionString line column
---     ++ "Function "
---     ++ show name
---     ++ " does not return in all execution paths."
--- show (WrongNumberOfArguments (Just (line, column)) expected actual) =
---   positionString line column
---     ++ "Called function with wrong number of arguments, expected: "
---     ++ show expected
---     ++ ", provided: "
---     ++ show actual
---     ++ "."
--- show MainNotDefined = "Error: main function not defined."
--- show _ = "Udefined show"
-
 positionString :: Int -> Int -> [Char]
 positionString line column =
   "Error at line " ++ show line ++ " column " ++ show column ++ ":\n"
 
 $(makeLenses ''StaticEnv)
+
+minInt = -2147483648
+
+maxInt = 2147483647

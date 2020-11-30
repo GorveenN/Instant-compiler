@@ -26,7 +26,7 @@ data ConstExpr
 
 runSRE :: Show a => Program a -> Either (StaticException a) ()
 runSRE program@(Program _ topdefs) =
-  if Ident "main" `elem` map fst funs
+  if (Ident "main", (T.TypeInt, [])) `elem` funs
     then
       runIdentity $
         runExceptT
@@ -37,7 +37,8 @@ runSRE program@(Program _ topdefs) =
                     _funMap = Map.fromList scopedFs,
                     _classMap = Set.empty,
                     _retType = T.Void,
-                    _nestLvl = 0
+                    _nestLvl = 0,
+                    _inClass = Nothing
                   }
               )
           )
@@ -85,12 +86,46 @@ checkTopDef x = case x of
   TopClassDef _ classdef -> checkClassDef classdef
   TopFunDef _ fndef -> checkFnDef fndef
 
+superMethod :: Ident -> Ident -> SRE a (Maybe Function)
+superMethod clsname name = do
+  cls <- gets (Map.lookup clsname . _allClasses)
+  case cls of
+    Just ClassMeta {_super = Just super} -> _superMethod super name
+    _ -> return Nothing
+  where
+    _superMethod clsname name = do
+      cls <- gets (Map.lookup clsname . _allClasses)
+      case cls of
+        Just ClassMeta {_methods = methods, _super = super} -> do
+          case Map.lookup name methods of
+            Just f -> do
+              return $ Just f
+            _ -> case super of
+              Just supername -> _superMethod supername name
+              _ -> return Nothing
+        _ -> return Nothing
+
+checkMethodRedefinition pos name ret args = do
+  incls <- asks _inClass
+  case incls of
+    Just clsname -> do
+      a <- superMethod clsname name
+      case a of
+        Just (ft, fargs) -> do
+          let f1 = (ret, map fst args)
+          let f2 = (ft, map fst fargs)
+          unless (f1 == f2) $
+            throwError (RedefinitionOfSymbol pos name)
+        _ -> return ()
+    _ -> return ()
+
 checkFnDef :: Show a => FnDef a -> SRE a (StaticEnv -> StaticEnv)
 checkFnDef x = case x of
   FnDef pos type_ ident_ args_ block_ -> do
     throwIfFunctionDefined ident_ pos
     args <- checkArgList args_
     rett <- checkType type_
+    checkMethodRedefinition pos ident_ rett args
     lvl <- asks _nestLvl
     let argF = foldr ((.) . (\(t, i) -> Map.insert i (t, lvl + 1))) id args
     returns <-
@@ -222,13 +257,16 @@ checkClassDef x = case x of
           over
             varMap
             (Map.insert (Ident "self") (T.TypeClass name, lvl + 1))
-    local (over nestLvl (+ 1) . self) $ checkClassBlock classblock
+    local (over nestLvl (+ 1) . self . set inClass (Just name)) $
+      checkClassBlock classblock
     return (over classMap (Set.insert name))
   ClassInh pos name supername classblock -> do
     throwIfClassDefined name pos
     cycle <- detectInheritanceCycle name
+    gets (Map.lookup supername . _allClasses)
+      >>= lookupFail (ClassNotInScope pos supername)
     when cycle $ throwError $ CyclicInheritance pos name
-    (fields, methods) <- superFieldsMethods supername
+    (fields, methods) <- superFieldsMethods name
     lvl <- asks _nestLvl
     let fieldsF =
           foldr
@@ -245,8 +283,13 @@ checkClassDef x = case x of
           over
             varMap
             (Map.insert (Ident "self") (T.TypeClass name, lvl + 2))
-    local (fieldsF . methodsF . self . over nestLvl (+ 2)) $
-      checkClassBlock classblock
+    local
+      ( fieldsF . methodsF . self . over nestLvl (+ 2)
+          . set
+            inClass
+            (Just name)
+      )
+      $ checkClassBlock classblock
     return (over classMap (Set.insert name))
 
 checkStmtDecl :: Show a => Stmt a -> [Stmt a] -> SRE a Bool
@@ -304,8 +347,9 @@ checkStmt x = case x of
     return False
   Decr pos expr -> do
     checkStmt (Incr pos expr)
-  Ret _ expr -> do
+  Ret pos expr -> do
     rett <- asks _retType
+    when (rett == T.Void) $ throwError (ReturnVoid pos)
     throwIfWrongType expr rett
     return True
   VRet pos -> do
@@ -340,7 +384,7 @@ checkStmt x = case x of
     lvl <- asks _nestLvl
     local
       ( over varMap (Map.insert ident (typet, lvl + 1))
-          . over nestLvl (+ 2)
+          . over nestLvl (+ 1)
       )
       (checkStmt stmt)
     return False
@@ -398,14 +442,27 @@ checkExpr x = case x of
       asks (Map.lookup ident . _varMap)
         >>= lookupFail (VariableNotInScope pos ident)
     return type_
-  ELitInt _ _ -> return T.TypeInt
+  ELitInt _ _ -> do
+    return T.TypeInt
   ELitTrue _ -> return T.TypeBool
   ELitFalse _ -> return T.TypeBool
   EString _ _ -> return T.TypeStr
   EApp pos ident exprs -> do
-    (ttype, args) <-
-      gets (Map.lookup ident . _allFuns)
-        >>= lookupFail (FunctionNotInScope pos ident)
+    a <- gets (Map.lookup ident . _allFuns)
+    (ttype, args) <- case a of
+      Just b -> return b
+      Nothing -> do
+        incls <- asks _inClass
+        case incls of
+          Just clsname -> do
+            ClassMeta {_methods = methods} <-
+              gets (Map.lookup clsname . _allClasses)
+                >>= lookupFail (FunctionNotInScope pos ident)
+            case Map.lookup ident methods of
+              Just b -> return b
+              Nothing ->
+                throwError (FunctionNotInScope pos ident)
+          Nothing -> throwError (FunctionNotInScope pos ident)
     throwIfArgumentsMismatch pos (map fst args) exprs
     return ttype
   EAccess pos indexed index -> do
@@ -422,22 +479,25 @@ checkExpr x = case x of
   Neg _ expr -> throwIfWrongType expr T.TypeInt
   Not _ expr -> throwIfWrongType expr T.TypeBool
   EMul _ expr1 _ expr2 -> throwIfWrong2Types T.TypeInt expr1 expr2
-  EAdd pos expr1 _ expr2 -> do
+  EAdd pos expr1 op expr2 -> do
     expr1t <- checkExpr expr1
     expr2t <- checkExpr expr2
-    unless
-      ( expr1t
-          == expr2t
-          && (expr1t == T.TypeInt || expr1t == T.TypeStr)
-      )
-      $ throwError (AddNonAddable pos expr1t expr2t)
+    unless (expr1t == expr2t) $ throwError (AddNonAddable pos expr1t expr2t)
+
+    case op of
+      (Plus _) ->
+        unless (expr1t == T.TypeInt || expr1t == T.TypeStr) $
+          throwError (AddNonAddable pos expr1t expr2t)
+      (Minus _) ->
+        unless (expr1t == T.TypeInt) $
+          throwError (AddNonAddable pos expr1t expr2t)
     return expr1t
   ERel pos expr1 relop expr2 -> do
     expr1t <- checkExpr expr1
     expr2t <- checkExpr expr2
     unless (expr1t == expr2t) $
       throwError (CompareDifferentTypes pos expr1t expr2t)
-    when (not (isEqNeq relop) && not (isInt expr1t)) $
+    when (not (isEqNeq relop) && not (isComparable expr1t)) $
       throwError (NonComparableTypes pos expr1t expr2t)
     return T.TypeBool
   EAnd _ expr1 expr2 -> throwIfWrong2Types T.TypeBool expr1 expr2
@@ -450,8 +510,9 @@ checkExpr x = case x of
     isEqNeq (NE _) = True
     isEqNeq _ = False
 
-    isInt T.TypeInt = True
-    isInt _ = False
+    isComparable T.TypeInt = True
+    isComparable T.TypeStr = True
+    isComparable _ = False
 
 signatureType :: Show a => Type a -> T.Type
 signatureType x = case x of

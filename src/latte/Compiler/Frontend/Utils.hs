@@ -206,11 +206,14 @@ superFieldsMethods name = do
     _superFieldsMethods name = do
       a <- gets (Map.lookup name . _allClasses)
       case a of
-        Just ClassMeta {_fields = fields, _methods = methods, _super = Just super} ->
+        Just ClassMeta {_fields = fields, _methods = methods, _super = super} ->
           do
             let f = Map.assocs fields
             let m = Map.keys methods
-            (restf, restm) <- _superFieldsMethods super
+            (restf, restm) <- case super of
+              Just super ->
+                _superFieldsMethods super
+              Nothing -> return ([], [])
             return (f ++ restf, m ++ restm)
         _ -> return ([], [])
 
