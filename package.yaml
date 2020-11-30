@@ -24,7 +24,7 @@ library:
     - src/parser
 
 executables:
-  Latte-exe:
+  latc:
     main:                Main.hs
     source-dirs:         src/main
     ghc-options:

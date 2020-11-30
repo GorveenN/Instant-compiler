@@ -298,12 +298,12 @@ checkStmt x = case x of
           expr1t
           expr2t
     return False
-  Incr pos ident -> do
-    throwIfWrongType (EVar pos ident) T.TypeInt
-    throwIfVariableNotDefined ident pos
+  Incr pos expr -> do
+    throwIfWrongType expr T.TypeInt
+    unless (isLvalue expr) $ throwError (AssignmentToRValue pos)
     return False
-  Decr pos ident -> do
-    checkStmt (Incr pos ident)
+  Decr pos expr -> do
+    checkStmt (Incr pos expr)
   Ret _ expr -> do
     rett <- asks _retType
     throwIfWrongType expr rett

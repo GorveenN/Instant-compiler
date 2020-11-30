@@ -33,8 +33,8 @@ NoInit.    Item         ::= Ident ;
 Init.      Item         ::= Ident "=" Expr ;
 
 Ass.       Stmt         ::= Expr "=" Expr  ";" ;
-Incr.      Stmt         ::= Ident "++"  ";" ;
-Decr.      Stmt         ::= Ident "--"  ";" ;
+Incr.      Stmt         ::= Expr "++"  ";" ;
+Decr.      Stmt         ::= Expr "--"  ";" ;
 
 Ret.       Stmt         ::= "return" Expr ";" ;
 VRet.      Stmt         ::= "return" ";" ;
