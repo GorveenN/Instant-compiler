@@ -10,8 +10,7 @@ import ParLatte
 import PrintLatte
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
-import System.IO (hPutStrLn, stderr)
-import Text.Pretty.Simple (pPrint)
+import System.IO (hPrint, hPutStrLn, stderr)
 
 type ParseFun a = [Token] -> Err a
 
@@ -28,23 +27,25 @@ runFile v p f = putStrLn f >> readFile f >>= run v p
 run v p s =
   case p (myLexer s) of
     Bad s -> do
-      hPutStrLn stderr $ "Parse Failed\n" ++ s
+      hPutStrLn stderr "ERROR"
+      hPutStrLn stderr "Parse Error"
+      hPrint stderr $ show s
       exitFailure
     Ok tree -> do
       putStrV v $ printTree tree
       let res = runSRE tree
       case res of
         (Left exc) -> do
+          hPutStrLn stderr "ERROR"
           hPutStrLn stderr ("Static check failed\n" ++ show exc)
           exitFailure
         (Right ()) -> do
-          putStrLn "Parse Successful"
+          hPutStrLn stderr "Ok"
           exitSuccess
 
 showTree :: (Show a, Print a) => Int -> a -> IO ()
 showTree v tree = do
-  -- putStrV v $ "\n[Abstract Syntax]\n\n" ++ pPrint tree
-  pPrint tree
+  putStrV v $ "\n[Abstract Syntax]\n\n" ++ show tree
   putStrV v $ "\n[Linearized tree]\n\n" ++ printTree tree
 
 usage :: IO ()

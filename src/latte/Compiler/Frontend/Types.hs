@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
+-- {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Compiler.Frontend.Types where
@@ -12,8 +12,6 @@ import Control.Monad.Reader (ReaderT)
 import Control.Monad.State (StateT)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import qualified Data.Text.Format as F
-import qualified Data.Text.Lazy as T
 
 data StaticStore = StaticStore
   { _allFuns :: FunMap,
@@ -78,10 +76,6 @@ data StaticException a
   | VariableNotInScope a Ident
   | VoidField a
   | WrongNumberOfArguments a Int Int
-
--- deriving (Show)
-
-format f s = T.unpack $ F.format f s
 
 instance Show (StaticException (Maybe (Int, Int))) where
   show (AddNonAddable (Just (line, column)) t1 t2) =

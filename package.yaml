@@ -1,5 +1,6 @@
 name:                Latte
 version:             0.1.0.0
+email:               "pk394334@students.mimuw.edu.pl"
 author:              "Piotr Karpiński"
 
 extra-source-files:
@@ -10,13 +11,8 @@ dependencies:
   - containers >= 0.6.0.1
   - array
   - mtl >= 2.2.2
-  - text
-  - filepath
-  - process
-  - text-format
   - lens
   - extra
-  - pretty-simple
 
 library:
   source-dirs:
@@ -24,7 +20,7 @@ library:
     - src/parser
 
 executables:
-  Latte-exe:
+  latc:
     main:                Main.hs
     source-dirs:         src/main
     ghc-options:
