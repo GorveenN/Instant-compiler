@@ -1,6 +1,6 @@
 name:                Latte
 version:             0.1.0.0
-email:               "pk394334@students.mimuw.edu.pl"
+mail:                "pk394334@students.mimuw.edu.pl"
 author:              "Piotr Karpiński"
 
 extra-source-files:

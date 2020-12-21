@@ -252,10 +252,10 @@ utf8Encode = map fromIntegral . go . ord
                         , 0x80 + oc Data.Bits..&. 0x3f
                         ]
 
-alex_action_4 =  tok (\p s -> PT p (eitherResIdent (TV . share) s)) 
-alex_action_5 =  tok (\p s -> PT p (eitherResIdent (TV . share) s)) 
-alex_action_6 =  tok (\p s -> PT p (TL $ share $ unescapeInitTail s)) 
-alex_action_7 =  tok (\p s -> PT p (TI $ share s))    
+alex_action_4 =  tok (\p s -> PT p (eitherResIdent (TV . share) s))
+alex_action_5 =  tok (\p s -> PT p (eitherResIdent (TV . share) s))
+alex_action_6 =  tok (\p s -> PT p (TL $ share $ unescapeInitTail s))
+alex_action_7 =  tok (\p s -> PT p (TI $ share s))
 {-# LINE 1 "templates/GenericTemplate.hs" #-}
 -- -----------------------------------------------------------------------------
 -- ALEX TEMPLATE

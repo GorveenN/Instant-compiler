@@ -80,7 +80,6 @@ EString.        Expr6   ::= String ;
 EApp.           Expr6   ::= Ident "(" [Expr] ")" ;
 EAccess.        Expr6   ::= Expr6 "[" Expr "]";
 
-ECast.          Expr5   ::= "null" "as" Ident;
 Neg.            Expr5   ::= "-" Expr6 ;
 Not.            Expr5   ::= "!" Expr6 ;
 
@@ -90,6 +89,9 @@ ERel.           Expr2   ::= Expr2 RelOp Expr3 ;
 
 EAnd.           Expr1   ::= Expr2 "&&" Expr1 ;
 EOr.            Expr    ::= Expr1 "||" Expr ;
+
+ECast.          Expr   ::= "("Ident")" Expr6;
+ECastT.         Expr   ::= "("Type")"  Expr6;
 
 coercions Expr 6 ;
 separator Expr "," ;

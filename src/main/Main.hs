@@ -31,9 +31,7 @@ run v p s =
       hPrint stderr $ show s
       exitFailure
     Ok tree -> do
-      putStrV v $ printTree tree
-      let res = runSRE tree
-      case res of
+      case runSRE tree of
         (Left exc) -> do
           hPutStrLn stderr "ERROR"
           hPutStrLn stderr ("Static check failed\n" ++ show exc)

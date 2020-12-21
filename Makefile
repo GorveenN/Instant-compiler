@@ -1,9 +1,9 @@
-all: src/main/Main.hs src/* gram
+all: src/main/Main.hs src/latte/*
 	stack build
 	stack --local-bin-path . install
 
-gram: gram/Latte.cf
-	cd gram ; bnfc --make --functor Latte.cf ; happy -gca ParLatte.y ; alex -g LexLatte.x ;  cp *.hs ../src/parser ;  rm ../src/parser/TestLatte.hs ; make distclean
+gram: src/gram/Latte.cf
+	cd src/gram ; bnfc --make --functor Latte.cf ; happy -gca ParLatte.y ; alex -g LexLatte.x ;  cp *.hs ../parser ;  rm ../parser/TestLatte.hs ../parser/SkelLatte.hs ; make distclean
 
 clean:
 	rm -rf .stack-work .build Instant-exe

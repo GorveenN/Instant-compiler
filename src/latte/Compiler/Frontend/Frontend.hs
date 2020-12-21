@@ -358,11 +358,11 @@ checkStmt x = case x of
     return True
   Cond pos expr stmt -> do
     checkStmt (CondElse pos expr stmt (Empty pos))
-  CondElse _ expr stmt1 stmt2 -> do
+  CondElse p expr stmt1 stmt2 -> do
     throwIfWrongType expr T.TypeBool
     constE <- constExpr expr
-    s1 <- checkStmt stmt1
-    s2 <- checkStmt stmt2
+    s1 <- checkBlock $ Block p [stmt1]
+    s2 <- checkBlock $ Block p [stmt2]
     case constE of
       Just (ConstBool True) -> return s1
       Just (ConstBool False) -> return s2
