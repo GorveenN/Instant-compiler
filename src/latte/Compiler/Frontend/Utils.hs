@@ -53,13 +53,13 @@ checkIdentUnique list = do
 getMethodType :: Show a => a -> T.Type -> Ident -> SRE a Function
 getMethodType pos cls@(T.TypeClass className) methodName = do
   ClassMeta {_methods = methodsMap, _super = super} <-
-    gets (Map.lookup className . _allClasses)
+    gets (Map.lookup (Ident className) . _allClasses)
       >>= lookupFail (TypeNotDefined pos cls)
   case Map.lookup methodName methodsMap of
     (Just t) -> return t
     _ -> do
       case super of
-        Just sname -> getMethodType pos (T.TypeClass sname) methodName
+        Just (Ident sname) -> getMethodType pos (T.TypeClass sname) methodName
         _ -> throwError $ MethodNotInScope pos cls methodName
 getMethodType pos className methodName =
   throwError $ MethodNotInScope pos className methodName
@@ -67,13 +67,13 @@ getMethodType pos className methodName =
 getFieldType :: Show a => a -> T.Type -> Ident -> SRE a T.Type
 getFieldType pos cls@(T.TypeClass className) fieldName = do
   ClassMeta {_fields = fieldsMap, _super = super} <-
-    gets (Map.lookup className . _allClasses)
+    gets (Map.lookup (Ident className) . _allClasses)
       >>= lookupFail (TypeNotDefined pos cls)
   case Map.lookup fieldName fieldsMap of
     (Just t) -> return t
     _ -> do
       case super of
-        Just sname -> getFieldType pos (T.TypeClass sname) fieldName
+        Just (Ident sname) -> getFieldType pos (T.TypeClass sname) fieldName
         _ -> throwError $ FieldNotInScope pos cls fieldName
 getFieldType pos t@(T.TypeArray _) fieldName =
   if fieldName == Ident "length"
@@ -84,7 +84,7 @@ getFieldType pos type_ fieldName =
 
 typeDefined :: Show a => T.Type -> SRE a Bool
 typeDefined (T.TypeArray t) = typeDefined t
-typeDefined (T.TypeClass n) = gets $ Map.member n . _allClasses
+typeDefined (T.TypeClass n) = gets $ Map.member (Ident n) . _allClasses
 typeDefined _ = return True
 
 throwIfWrongType :: Show a => Expr a -> T.Type -> SRE a T.Type
@@ -167,21 +167,21 @@ throwIfClassDefined var pos = do
   when a $ throwError $ RedefinitionOfSymbol pos var
 
 throwIfClassNotDefined :: Show a => Ident -> a -> SRE a ()
-throwIfClassNotDefined var pos = do
-  a <- gets $ Map.member var . _allClasses
+throwIfClassNotDefined vid@(Ident var) pos = do
+  a <- gets $ Map.member vid . _allClasses
   unless a $ throwError $ TypeNotDefined pos $ T.TypeClass var
 
 isLvalue :: Expr a -> Bool
-isLvalue EField {} = True
+isLvalue (EField _ e _) = isLvalue e
 isLvalue EVar {} = True
-isLvalue EAccess {} = True
+isLvalue (EAccess _ e _) = isLvalue e
 isLvalue _ = False
 
 superclass :: Show a => T.Type -> T.Type -> SRE a Bool
 superclass (T.TypeClass t1) (T.TypeClass t2) = do
-  a <- gets (Map.lookup t1 . _allClasses)
+  a <- gets (Map.lookup (Ident t1) . _allClasses)
   case a of
-    Just ClassMeta {_super = Just super} -> do
+    Just ClassMeta {_super = Just (Ident super)} -> do
       if super == t2
         then return True
         else superclass (T.TypeClass super) (T.TypeClass t2)
@@ -217,5 +217,5 @@ superFieldsMethods name = do
             return (f ++ restf, m ++ restm)
         _ -> return ([], [])
 
-detectInheritanceCycle :: Show a => Ident -> SRE a Bool
+detectInheritanceCycle :: Show a => T.Id -> SRE a Bool
 detectInheritanceCycle name = superclass (T.TypeClass name) (T.TypeClass name)

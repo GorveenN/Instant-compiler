@@ -250,19 +250,19 @@ checkClassBlock x = case x of
 
 checkClassDef :: Show a => ClassDef a -> SRE a (StaticEnv -> StaticEnv)
 checkClassDef x = case x of
-  Class pos name classblock -> do
+  Class pos name@(Ident idname) classblock -> do
     throwIfClassDefined name pos
     lvl <- asks _nestLvl
     let self =
           over
             varMap
-            (Map.insert (Ident "self") (T.TypeClass name, lvl + 1))
+            (Map.insert (Ident "self") (T.TypeClass idname, lvl + 1))
     local (over nestLvl (+ 1) . self . set inClass (Just name)) $
       checkClassBlock classblock
     return (over classMap (Set.insert name))
-  ClassInh pos name supername classblock -> do
+  ClassInh pos name@(Ident idname) supername classblock -> do
     throwIfClassDefined name pos
-    cycle <- detectInheritanceCycle name
+    cycle <- detectInheritanceCycle idname
     gets (Map.lookup supername . _allClasses)
       >>= lookupFail (ClassNotInScope pos supername)
     when cycle $ throwError $ CyclicInheritance pos name
@@ -282,7 +282,7 @@ checkClassDef x = case x of
     let self =
           over
             varMap
-            (Map.insert (Ident "self") (T.TypeClass name, lvl + 2))
+            (Map.insert (Ident "self") (T.TypeClass idname, lvl + 2))
     local
       ( fieldsF . methodsF . self . over nestLvl (+ 2)
           . set
@@ -394,9 +394,9 @@ checkStmt x = case x of
 
 checkScalarType :: Show a => ScalarType a -> SRE a T.Type
 checkScalarType x = case x of
-  ClassType pos ident -> do
+  ClassType pos ident@(Ident idident) -> do
     throwIfClassNotDefined ident pos
-    return $ T.TypeClass ident
+    return $ T.TypeClass idident
   Int _ -> return T.TypeInt
   Str _ -> return T.TypeStr
   Bool _ -> return T.TypeBool
@@ -420,7 +420,7 @@ checkExpr x = case x of
     throwIfTypeNotDefined pos t
     case t of
       (T.TypeClass a) -> do
-        throwIfClassNotDefined a pos
+        throwIfClassNotDefined (Ident a) pos
         return t
       _ -> throwError $ NewOnNonClassType pos t
     return t
@@ -471,10 +471,10 @@ checkExpr x = case x of
     case arrType of
       T.TypeArray a -> return a
       t -> throwError $ NonIndexable pos t
-  ECast pos ident -> do
+  ECast pos ident@(Ident idident) -> do
     ifM
       (gets (Map.member ident . _allClasses))
-      (return $ T.TypeClass ident)
+      (return $ T.TypeClass idident)
       (throwError $ SymbolNotDefined pos ident)
   Neg _ expr -> throwIfWrongType expr T.TypeInt
   Not _ expr -> throwIfWrongType expr T.TypeBool
@@ -521,7 +521,7 @@ signatureType x = case x of
 
 signatureScalarType :: Show a => ScalarType a -> T.Type
 signatureScalarType x = case x of
-  ClassType _ ident -> T.TypeClass ident
+  ClassType _ (Ident ident) -> T.TypeClass ident
   Int _ -> T.TypeInt
   Str _ -> T.TypeStr
   Bool _ -> T.TypeBool

@@ -1,61 +1,60 @@
 module Compiler.Backend.Tree where
 
-import AbsLatte (Ident)
+import qualified AbsLatte as A
+
+type Id = String
 
 data Program = Program [TopDef]
   deriving (Eq, Ord, Show, Read)
 
-data TopDef = ClassDef | FunDef [FnDef]
+data TopDef = TopClassDef ClassDef | TopFnDef FnDef
   deriving (Eq, Ord, Show, Read)
 
-data FnDef = FnDef Type Ident [TypedIdent] Stmt
+data FnDef = FnDef Type Id [TypedId] Stmt
   deriving (Eq, Ord, Show, Read)
 
-data TypedIdent = TypedIdent Type Ident
+data TypedId = TypedId Type Id
   deriving (Eq, Ord, Show, Read)
 
-data ClassBlock = ClassBlock [TypedIdent] [FnDef]
+data ClassBlock = ClassBlock [TypedId] [FnDef]
   deriving (Eq, Ord, Show, Read)
 
 data ClassDef
-  = Class Ident ClassBlock
-  | ClassInh Ident Ident ClassBlock
+  = Class Id ClassBlock
+  | ClassInh Id Id ClassBlock
   deriving (Eq, Ord, Show, Read)
 
 data Stmt
   = Block [Stmt]
-  | Decl Type Item
+  | Decl Type Id Expr
   | Ass Expr Expr
-  | Incr Ident
-  | Decr Ident
+  | Incr Expr
+  | Decr Expr
   | Ret Expr
   | VRet
   | Cond Expr Stmt
   | CondElse Expr Stmt Stmt
   | While Expr Stmt
-  | For Type Ident Expr Stmt
+  | For Type Id Expr Stmt
   | SExp Expr
   deriving (Eq, Ord, Show, Read)
 
-data Item = NoInit Ident | Init Ident Expr
-  deriving (Eq, Ord, Show, Read)
-
-data Type = TypeInt | TypeBool | TypeStr | TypeClass Ident | TypeArray Type | Void
+data Type = TypeInt | TypeBool | TypeStr | TypeClass Id | TypeArray Type | Void
   deriving (Eq, Ord, Read)
 
 data Expr
   = ENewObject Type
   | ENewArray Type Expr
-  | EField Expr Ident
-  | EMethodCall Expr Ident [Expr]
-  | EVar Ident
+  | EField Expr Id
+  | EMethodCall Expr Id [Expr]
+  | EVar Id
   | ELitInt Integer
   | ELitTrue
   | ELitFalse
+  | ENull
   | EString String
-  | EApp Ident [Expr]
+  | EApp Id [Expr]
   | EAccess Expr Expr
-  | ECast Type
   | Neg Expr
   | Not Expr
   | EArithm Expr AritmOp Expr
@@ -75,3 +74,138 @@ instance Show Type where
   show (TypeClass n) = "class " ++ show n
   show (TypeArray n) = show n ++ " []"
   show Void = "void"
+
+transIdent :: A.Ident -> Id
+transIdent (A.Ident a) = a
+
+transProgram :: Show a => A.Program a -> Program
+transProgram (A.Program _ s) = Program $ map transTopDef s
+
+transTopDef :: Show a => A.TopDef a -> TopDef
+transTopDef (A.TopClassDef _ cls) = TopClassDef $ transClassDef cls
+
+transFnDef :: Show a => A.FnDef a -> FnDef
+transFnDef (A.FnDef _ type_ name args body) =
+  FnDef
+    (transType type_)
+    (transIdent name)
+    (map transArg args)
+    (transBlock body)
+
+transArg :: Show a => A.Arg a -> TypedId
+transArg (A.Arg _ type_ name) =
+  TypedId (transNonVoidType type_) (transIdent name)
+
+transClassDef :: Show a => A.ClassDef a -> ClassDef
+transClassDef (A.Class _ name block) =
+  Class (transIdent name) (transClassBlock block)
+transClassDef (A.ClassInh _ name inh block) =
+  ClassInh (transIdent name) (transIdent inh) (transClassBlock block)
+
+transClassBlock :: Show a => A.ClassBlock a -> ClassBlock
+transClassBlock (A.ClassBlock _ ss) = ClassBlock (getFields ss) (getMethods ss)
+  where
+    getFields ((A.ClassField _ type_ idents) : rest) =
+      map (TypedId (transType type_) . transIdent) idents ++ getFields rest
+    getFields (_ : rest) = getFields rest
+    getFields [] = []
+    getMethods ((A.ClassMethod _ fndef) : rest) =
+      transFnDef fndef : getMethods rest
+    getMethods (_ : rest) = getMethods rest
+    getMethods [] = []
+
+transBlock :: Show a => A.Block a -> Stmt
+transBlock (A.Block _ ss) = Block (concatMap transStmt ss)
+
+transStmtToBlock (A.BStmt _ block) = transBlock block
+transStmtToBlock a = Block $ transStmt a
+
+transStmt :: Show a => A.Stmt a -> [Stmt]
+transStmt (A.Empty _) = []
+transStmt (A.BStmt _ block) = [transBlock block]
+transStmt (A.Decl _ type_ items) =
+  map (transItem (transNonVoidType type_)) items
+transStmt (A.Ass _ e1 e2) = [Ass (transExpr e1) (transExpr e2)]
+transStmt (A.Incr _ e) = [Incr $ transExpr e]
+transStmt (A.Decr _ e) = [Decr $ transExpr e]
+transStmt (A.Ret _ e) = [Ret $ transExpr e]
+transStmt (A.VRet _) = [VRet]
+transStmt (A.Cond _ e s) = [Cond (transExpr e) (transStmtToBlock s)]
+transStmt (A.CondElse _ e s1 s2) =
+  [CondElse (transExpr e) (Block $ transStmt s1) (transStmtToBlock s2)]
+transStmt (A.While _ e s) = [While (transExpr e) (transStmtToBlock s)]
+transStmt (A.For _ type_ name e s) =
+  [ For
+      (transNonVoidType type_)
+      (transIdent name)
+      (transExpr e)
+      (transStmtToBlock s)
+  ]
+transStmt (A.SExp _ e) = [SExp $ transExpr e]
+
+transItem :: Show a => Type -> A.Item a -> Stmt
+transItem t (A.NoInit _ ident) = Decl t (transIdent ident) e
+  where
+    e = case t of
+      TypeInt -> ELitInt 0
+      TypeBool -> ELitFalse
+      TypeStr -> EString ""
+      TypeArray _ -> ENull
+      TypeClass _ -> ENull
+transItem t (A.Init _ ident e) = Decl t (transIdent ident) (transExpr e)
+
+transScalarType :: Show a => A.ScalarType a -> Type
+transScalarType (A.ClassType _ ident) = TypeClass $ transIdent ident
+transScalarType (A.Int _) = TypeInt
+transScalarType (A.Str _) = TypeStr
+transScalarType (A.Bool _) = TypeBool
+
+transNonVoidType :: Show a => A.NonVoidType a -> Type
+transNonVoidType (A.ArrayType _ type_) = TypeArray $ transScalarType type_
+transNonVoidType (A.ScalarType _ type_) = transScalarType type_
+
+transType :: Show a => A.Type a -> Type
+transType (A.NonVoidType _ type_) = transNonVoidType type_
+transType (A.Void _) = Void
+
+transExpr :: Show a => A.Expr a -> Expr
+transExpr (A.ENewObject _ t) = ENewObject $ transScalarType t
+transExpr (A.ENewArray _ t e) = ENewArray (transScalarType t) (transExpr e)
+transExpr (A.EField _ e i) = EField (transExpr e) (transIdent i)
+transExpr (A.EMethodCall _ e i exprs) =
+  EMethodCall (transExpr e) (transIdent i) (map transExpr exprs)
+transExpr (A.EVar _ i) = EVar $ transIdent i
+transExpr (A.ELitInt _ i) = ELitInt i
+transExpr (A.ELitTrue _) = ELitTrue
+transExpr (A.ELitFalse _) = ELitFalse
+transExpr (A.EString _ s) = EString (tail $ init s)
+transExpr (A.EApp _ i exprs) = EApp (transIdent i) (map transExpr exprs)
+transExpr (A.EAccess _ e1 e2) = EAccess (transExpr e1) (transExpr e2)
+transExpr (A.Neg _ e) = Neg $ transExpr e
+transExpr (A.Not _ e) = Not $ transExpr e
+transExpr (A.EMul _ e1 op e2) =
+  EArithm (transExpr e1) (transMulOp op) (transExpr e2)
+transExpr (A.EAdd _ e1 op e2) =
+  EArithm (transExpr e1) (transAddOp op) (transExpr e2)
+transExpr (A.ERel _ e1 op e2) =
+  ELogic (transExpr e1) (transRelOp op) (transExpr e2)
+transExpr (A.EAnd _ e1 e2) = ELogic (transExpr e1) AND (transExpr e2)
+transExpr (A.EOr _ e1 e2) = ELogic (transExpr e1) OR (transExpr e2)
+transExpr (A.ECast _ _) = ENull
+
+transAddOp :: Show a => A.AddOp a -> AritmOp
+transAddOp (A.Plus _) = Plus
+transAddOp (A.Minus _) = Minus
+
+transMulOp :: Show a => A.MulOp a -> AritmOp
+transMulOp (A.Times _) = Times
+transMulOp (A.Div _) = Div
+transMulOp (A.Mod _) = Mod
+
+transRelOp :: Show a => A.RelOp a -> LogicOp
+transRelOp (A.LTH a) = LTH
+transRelOp (A.LE a) = LE
+transRelOp (A.GTH a) = GTH
+transRelOp (A.GE a) = GE
+transRelOp (A.EQU a) = EQU
+transRelOp (A.NE a) = NE
