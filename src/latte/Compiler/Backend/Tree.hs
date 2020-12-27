@@ -49,8 +49,6 @@ data Expr
   | EMethodCall Expr Id [Expr]
   | EVar Id
   | ELitInt Integer
-  | ELitTrue
-  | ELitFalse
   | ENull
   | EString String
   | EApp Id [Expr]
@@ -61,6 +59,8 @@ data Expr
   | ELogic Expr LogicOp Expr
   deriving (Eq, Ord, Show, Read)
 
+-- | ELitTrue
+-- | ELitFalse
 data AritmOp = Plus | Minus | Times | Div | Mod
   deriving (Eq, Ord, Show, Read)
 
@@ -83,14 +83,21 @@ transProgram (A.Program _ s) = Program $ map transTopDef s
 
 transTopDef :: Show a => A.TopDef a -> TopDef
 transTopDef (A.TopClassDef _ cls) = TopClassDef $ transClassDef cls
+transTopDef (A.TopFunDef _ fn) = TopFnDef $ transFnDef fn
 
 transFnDef :: Show a => A.FnDef a -> FnDef
-transFnDef (A.FnDef _ type_ name args body) =
+transFnDef (A.FnDef _ type_ name args body@(A.Block _ ss)) =
   FnDef
     (transType type_)
     (transIdent name)
     (map transArg args)
-    (transBlock body)
+    (transBlock retBody)
+  where
+    retBody = case (type_, reverse ss) of
+      (A.Void _, A.VRet _ : _) -> body
+      (A.Void _, _) -> addRet body
+      _ -> body
+    addRet (A.Block a ss) = A.Block a (ss ++ [A.VRet a])
 
 transArg :: Show a => A.Arg a -> TypedId
 transArg (A.Arg _ type_ name) =
@@ -148,10 +155,10 @@ transItem t (A.NoInit _ ident) = Decl t (transIdent ident) e
   where
     e = case t of
       TypeInt -> ELitInt 0
-      TypeBool -> ELitFalse
+      TypeBool -> ELitInt 0
       TypeStr -> EString ""
-      TypeArray _ -> ENull
-      TypeClass _ -> ENull
+      TypeArray _ -> ELitInt 0
+      TypeClass _ -> ELitInt 0
 transItem t (A.Init _ ident e) = Decl t (transIdent ident) (transExpr e)
 
 transScalarType :: Show a => A.ScalarType a -> Type
@@ -176,8 +183,8 @@ transExpr (A.EMethodCall _ e i exprs) =
   EMethodCall (transExpr e) (transIdent i) (map transExpr exprs)
 transExpr (A.EVar _ i) = EVar $ transIdent i
 transExpr (A.ELitInt _ i) = ELitInt i
-transExpr (A.ELitTrue _) = ELitTrue
-transExpr (A.ELitFalse _) = ELitFalse
+transExpr (A.ELitTrue _) = ELogic (ELitInt 0) EQU (ELitInt 0)
+transExpr (A.ELitFalse _) = ELogic (ELitInt 0) EQU (ELitInt 1)
 transExpr (A.EString _ s) = EString (tail $ init s)
 transExpr (A.EApp _ i exprs) = EApp (transIdent i) (map transExpr exprs)
 transExpr (A.EAccess _ e1 e2) = EAccess (transExpr e1) (transExpr e2)
@@ -191,7 +198,7 @@ transExpr (A.ERel _ e1 op e2) =
   ELogic (transExpr e1) (transRelOp op) (transExpr e2)
 transExpr (A.EAnd _ e1 e2) = ELogic (transExpr e1) AND (transExpr e2)
 transExpr (A.EOr _ e1 e2) = ELogic (transExpr e1) OR (transExpr e2)
-transExpr (A.ECast _ _) = ENull
+transExpr (A.ECast _ _) = ELitInt 0
 
 transAddOp :: Show a => A.AddOp a -> AritmOp
 transAddOp (A.Plus _) = Plus

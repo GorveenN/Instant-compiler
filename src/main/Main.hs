@@ -2,8 +2,11 @@
 
 module Main where
 
+import Compiler.Backend.Backend (runCodeGen)
+import Compiler.Backend.Tree (transProgram)
 import Compiler.Frontend.Frontend (runSRE)
 import Control.Monad (when)
+import Control.Monad.Trans.Class (lift)
 import ErrM
 import LexLatte
 import ParLatte
@@ -37,6 +40,9 @@ run v p s =
           hPutStrLn stderr ("Static check failed\n" ++ show exc)
           exitFailure
         (Right ()) -> do
+          let p = transProgram tree
+          let a = runCodeGen p
+          mapM_ print a
           hPutStrLn stderr "Ok"
           exitSuccess
 
