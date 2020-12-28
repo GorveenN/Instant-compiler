@@ -2,8 +2,6 @@
 
 module Compiler.Backend.CodeGen where
 
--- import Compiler.Backend.Backend (emmitExpr)
-
 import Control.Lens (makeLenses)
 import Control.Monad.Reader (ReaderT, runReaderT)
 import Control.Monad.State (StateT, evalStateT)
@@ -24,13 +22,32 @@ data Register
   | EBP
   | ESI
   | EDI
-  deriving (Show, Eq)
+  deriving (Eq)
 
+instance Show Register where
+  show EAX = "eax"
+  show ECX = "ecx"
+  show EDX = "edx"
+  show EBX = "ebx"
+  show ESP = "esp"
+  show EBP = "ebp"
+  show ESI = "esi"
+  show EDI = "edi"
+
+eax_ :: Operand
 eax_ = Register EAX Nothing
 
+esp_ :: Operand
 esp_ = Register ESP Nothing
 
+ebp_ :: Operand
 ebp_ = Register EBP Nothing
+
+edx_ :: Operand
+edx_ = Register EDX Nothing
+
+ebx_ :: Operand
+ebx_ = Register EBX Nothing
 
 type Offset = Integer
 
@@ -64,7 +81,29 @@ data Instruction
   | INC Operand
   | DEC Operand
   | RET
-  deriving (Show)
+
+instance Show Instruction where
+  show (IDIV o) = "idiv " ++ show o
+  show CDQ = "cdq"
+  show (IMUL o1 o2) = "imul " ++ show o1 ++ " " ++ show o2
+  show (MOV o1 o2) = "mov " ++ show o1 ++ " " ++ show o2
+  show (ADD o1 o2) = "add " ++ show o1 ++ " " ++ show o2
+  show (SUB o1 o2) = "sub " ++ show o1 ++ " " ++ show o2
+  show (POP o) = "pop " ++ show o
+  show (CMP o1 o2) = "cmp " ++ show o1 ++ " " ++ show o2
+  show (PUSH o) = "push " ++ show o
+  show (JMP l) = "jmp " ++ show l
+  show (JE l) = "je " ++ show l
+  show (JG l) = "jg " ++ show l
+  show (JGE l) = "jge " ++ show l
+  show (JL l) = "jl " ++ show l
+  show (JLE l) = "jle " ++ show l
+  show (JNE l) = "jne " ++ show l
+  show (LABEL l) = show l
+  show (NEG l) = "neg " ++ show l
+  show (INC l) = "inc " ++ show l
+  show (DEC l) = "dec " ++ show l
+  show RET = "ret"
 
 type SRW s e d = StateT s (ReaderT e (Writer [Instruction])) d
 

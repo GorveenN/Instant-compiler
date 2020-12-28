@@ -39,7 +39,13 @@ data Stmt
   | SExp Expr
   deriving (Eq, Ord, Show, Read)
 
-data Type = TypeInt | TypeBool | TypeStr | TypeClass Id | TypeArray Type | Void
+data Type
+  = TypeInt
+  | TypeBool
+  | TypeStr
+  | TypeClass Id
+  | TypeArray Type
+  | Void
   deriving (Eq, Ord, Read)
 
 data Expr
@@ -49,7 +55,6 @@ data Expr
   | EMethodCall Expr Id [Expr]
   | EVar Id
   | ELitInt Integer
-  | ENull
   | EString String
   | EApp Id [Expr]
   | EAccess Expr Expr
@@ -61,10 +66,23 @@ data Expr
 
 -- | ELitTrue
 -- | ELitFalse
-data AritmOp = Plus | Minus | Times | Div | Mod
+data AritmOp
+  = Plus
+  | Minus
+  | Times
+  | Div
+  | Mod
   deriving (Eq, Ord, Show, Read)
 
-data LogicOp = LTH | LE | GTH | GE | EQU | NE | AND | OR
+data LogicOp
+  = LTH
+  | LE
+  | GTH
+  | GE
+  | EQU
+  | NE
+  | AND
+  | OR
   deriving (Eq, Ord, Show, Read)
 
 instance Show Type where

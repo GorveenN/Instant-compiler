@@ -8,6 +8,7 @@ import Control.Lens hiding
     element,
   )
 import Control.Monad
+import Control.Monad.Fail (MonadFail, fail)
 import Control.Monad.Reader
   ( ReaderT,
     asks,
@@ -28,6 +29,9 @@ import Control.Monad.Writer
     tell,
   )
 import qualified Data.Map as Map
+
+instance MonadFail Identity where
+  fail = error "Fail"
 
 runCodeGen :: Program -> [Instruction]
 runCodeGen program =
@@ -50,23 +54,25 @@ movIfNescessary o1 o2 =
       mov_ o2 o1
       return o1
 
+getVar :: String -> CodeGen Operand
+getVar n = do
+  i <- asks ((Map.! n) . _vars)
+  return $ Memory EBP (Just i)
+
 -- result of Expr is packed in eax register or is a constant
 emmitExpr :: Expr -> CodeGen Operand
 emmitExpr (ELitInt i) = return $ Const i
--- emmitExpr ELitTrue = return $ Const 1
--- emmitExpr ELitFalse = return $ Const 0
--- emmitExpr ENull = return $ Const 0
 emmitExpr (EString s) = undefined
+emmitExpr (EVar v) = getVar v
 emmitExpr (EApp n args) = do
   mapM_ (emmitExpr >=> push_) (reverse args)
-  -- sub_ esp_ (Const (toInteger (length args * 4)))
   return eax_
 emmitExpr (Neg e) = do
   op <- emmitExpr e >>= immediateToOperand eax_
   neg_ op
   return op
 emmitExpr (Not e) = do
-  (tlabel, flabel, endlabel) <- makeTFLabels
+  [tlabel, flabel, endlabel] <- makeNLabels 3
   emmitLogic e (Just flabel) (Just tlabel)
   emmitBoolEpilogue tlabel flabel endlabel
 emmitExpr (EArithm e1 op e2) = case op of
@@ -75,29 +81,29 @@ emmitExpr (EArithm e1 op e2) = case op of
   Times -> addsub imul_ e1 e2
   Div -> do
     basediv e1 e2
-    return (Register EAX Nothing)
+    return eax_
   Mod -> do
     basediv e1 e2
-    mov_ (Register EDX Nothing) (Register EAX Nothing)
-    return (Register EAX Nothing)
+    mov_ edx_ eax_
+    return eax_
   where
     addsub ctr e1 e2 = do
       push_ =<< emmitExpr e2
       op1 <- emmitExpr e1 >>= immediateToOperand eax_
-      let op2 = Register EDX Nothing
+      let op2 = edx_
       pop_ op2
-      ctr op2 op1
+      ctr op1 op2
       return op2
 
     basediv e1 e2 = do
       push_ =<< emmitExpr e2
       op1 <- emmitExpr e1 >>= immediateToOperand eax_
-      let divisor = Register EBX Nothing
+      let divisor = ebx_
       pop_ divisor
       cdq_
       idiv_ divisor
 emmitExpr e@ELogic {} = do
-  (tlabel, flabel, endlabel) <- makeTFLabels
+  [tlabel, flabel, endlabel] <- makeNLabels 3
   emmitLogic e (Just tlabel) (Just flabel)
   emmitBoolEpilogue tlabel flabel endlabel
 
@@ -144,10 +150,10 @@ addVar :: String -> Operand -> CodeGen (Store -> Store)
 addVar n o = do
   push_ o
   addr <- asks _stackH
-  return $ over vars (Map.insert n addr) . over stackH (+ 4)
+  return $ over vars (Map.insert n $ addr + 4) . over stackH (+ 4)
 
 emmitStmt :: Stmt -> CodeGen ()
-emmitStmt (Block ss) = do
+emmitStmt (Block ss) =
   emmitStmtList ss
   where
     emmitStmtList :: [Stmt] -> CodeGen ()
@@ -169,33 +175,31 @@ emmitStmt (Ret e) = do
   leave_ >> ret_
 emmitStmt VRet = leave_ >> ret_
 emmitStmt (Cond e s) = do
-  label <- makeLabel
-  emmitExpr e >>= setIsTrue
-  jne_ label
+  [tlabel, flabel] <- makeNLabels 2
+  emmitLogic e (Just tlabel) (Just flabel)
+  label_ tlabel
   emmitStmt s
-  label_ label
+  label_ flabel
 emmitStmt (CondElse e s1 s2) = do
-  flabel <- makeLabel
-  endlabel <- makeLabel
-  emmitExpr e >>= setIsTrue
-  jne_ flabel
+  [tlabel, flabel, endlabel] <- makeNLabels 3
+  emmitLogic e (Just tlabel) (Just flabel)
+  label_ tlabel
   emmitStmt s1
   jmp_ endlabel
+  label_ flabel
   emmitStmt s2
   label_ endlabel
 emmitStmt (While e s) = do
-  condlabel <- makeLabel
-  endlabel <- makeLabel
+  [tlabel, flabel, condlabel] <- makeNLabels 3
   label_ condlabel
-  emmitExpr e >>= setIsTrue
-  jne_ endlabel
+  emmitLogic e (Just tlabel) (Just flabel)
+  label_ tlabel
   emmitStmt s
   jmp_ condlabel
+  label_ flabel
+-- TODO
 emmitStmt (For t n e s) = undefined
 emmitStmt (SExp e) = void $ emmitExpr e
-
-setIsTrue :: Operand -> CodeGen ()
-setIsTrue o = cmp_ o $ Const 1
 
 emmitProgram :: Program -> CodeGen ()
 emmitProgram (Program defs) = mapM_ emmitTopDef defs
@@ -216,19 +220,15 @@ emmitTopDef (TopFnDef (FnDef type_ name args stmt)) = do
 enter_ :: CodeGen ()
 enter_ = do
   push_ ebp_
-  mov_ esp_ ebp_
+  mov_ (Register ESP Nothing) ebp_
 
 leave_ :: CodeGen ()
 leave_ = do
-  mov_ ebp_ esp_
+  mov_ ebp_ (Register ESP Nothing)
   pop_ ebp_
 
-makeTFLabels :: CodeGen (Label, Label, Label)
-makeTFLabels = do
-  l1 <- makeLabel
-  l2 <- makeLabel
-  l3 <- makeLabel
-  return (l1, l2, l3)
+makeNLabels :: Integer -> CodeGen [Label]
+makeNLabels n = mapM (const makeLabel) [1 .. n]
 
 makeLabel :: CodeGen Label
 makeLabel = do
