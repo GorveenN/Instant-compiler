@@ -1,4 +1,4 @@
-all: gram src/main/Main.hs src/latte/*
+all: src/main/Main.hs src/latte/*
 	stack build
 	stack --local-bin-path . install
 

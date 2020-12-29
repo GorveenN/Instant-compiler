@@ -1,5 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 module Compiler.Backend.CodeGen where
 
 import Control.Lens (makeLenses)
@@ -25,39 +23,49 @@ data Register
   deriving (Eq)
 
 instance Show Register where
-  show EAX = "eax"
-  show ECX = "ecx"
-  show EDX = "edx"
-  show EBX = "ebx"
-  show ESP = "esp"
-  show EBP = "ebp"
-  show ESI = "esi"
-  show EDI = "edi"
+  show EAX = "%eax"
+  show ECX = "%ecx"
+  show EDX = "%edx"
+  show EBX = "%ebx"
+  show ESP = "%esp"
+  show EBP = "%ebp"
+  show ESI = "%esi"
+  show EDI = "%edi"
 
 eax_ :: Operand
-eax_ = Register EAX Nothing
+eax_ = Register EAX
 
 esp_ :: Operand
-esp_ = Register ESP Nothing
+esp_ = Register ESP
 
 ebp_ :: Operand
-ebp_ = Register EBP Nothing
+ebp_ = Register EBP
 
 edx_ :: Operand
-edx_ = Register EDX Nothing
+edx_ = Register EDX
 
 ebx_ :: Operand
-ebx_ = Register EBX Nothing
+ebx_ = Register EBX
 
 type Offset = Integer
 
 type Label = String
 
 data Operand
-  = Register Register (Maybe Offset)
+  = Register Register
   | Memory Register (Maybe Offset)
   | Const Integer
-  deriving (Show, Eq)
+  | Label Label
+  deriving (Eq)
+
+-- instance Show
+
+instance Show Operand where
+  show (Register r) = show r
+  show (Memory r (Just o)) = show o ++ "(" ++ show r ++ ")"
+  show (Memory r Nothing) = "(" ++ show r ++ ")"
+  show (Const i) = "$" ++ show i
+  show (Label l) = "$" ++ l
 
 data Instruction
   = IDIV Operand
@@ -77,6 +85,7 @@ data Instruction
   | JLE Label
   | JNE Label
   | LABEL Label
+  | CALL Label
   | NEG Operand
   | INC Operand
   | DEC Operand
@@ -85,12 +94,12 @@ data Instruction
 instance Show Instruction where
   show (IDIV o) = "idiv " ++ show o
   show CDQ = "cdq"
-  show (IMUL o1 o2) = "imul " ++ show o1 ++ " " ++ show o2
-  show (MOV o1 o2) = "mov " ++ show o1 ++ " " ++ show o2
-  show (ADD o1 o2) = "add " ++ show o1 ++ " " ++ show o2
-  show (SUB o1 o2) = "sub " ++ show o1 ++ " " ++ show o2
+  show (IMUL o1 o2) = "imul " ++ show o1 ++ ", " ++ show o2
+  show (MOV o1 o2) = "mov " ++ show o1 ++ ", " ++ show o2
+  show (ADD o1 o2) = "add " ++ show o1 ++ ", " ++ show o2
+  show (SUB o1 o2) = "sub " ++ show o1 ++ ", " ++ show o2
   show (POP o) = "pop " ++ show o
-  show (CMP o1 o2) = "cmp " ++ show o1 ++ " " ++ show o2
+  show (CMP o1 o2) = "cmp " ++ show o1 ++ ", " ++ show o2
   show (PUSH o) = "push " ++ show o
   show (JMP l) = "jmp " ++ show l
   show (JE l) = "je " ++ show l
@@ -99,82 +108,88 @@ instance Show Instruction where
   show (JL l) = "jl " ++ show l
   show (JLE l) = "jle " ++ show l
   show (JNE l) = "jne " ++ show l
-  show (LABEL l) = show l
+  show (LABEL l) = l ++ ":"
+  show (CALL l) = "call " ++ l
   show (NEG l) = "neg " ++ show l
   show (INC l) = "inc " ++ show l
   show (DEC l) = "dec " ++ show l
   show RET = "ret"
 
-type SRW s e d = StateT s (ReaderT e (Writer [Instruction])) d
+type SRW s e d = StateT s (ReaderT e (Writer ([Instruction], [StringLiteral]))) d
 
-type CodeGen d = SRW Integer Store d
+data StringLiteral = StringLiteral String Label
 
-data Store = Store
-  { _vars :: Map String Integer,
-    _stackH :: Integer
-  }
+instance Show StringLiteral where
+  show (StringLiteral s l) = l ++ ":\n" ++ ".string " ++ show s
 
-$(makeLenses ''Store)
+tellInstruction :: Instruction -> SRW s e ()
+tellInstruction xs = tell ([xs], mempty)
 
-add_ :: Operand -> Operand -> CodeGen ()
-add_ l r = tell [ADD l r]
+tellStringLiteral :: StringLiteral -> SRW s e ()
+tellStringLiteral xs = tell (mempty, [xs])
 
-sub_ :: Operand -> Operand -> CodeGen ()
-sub_ l r = tell [SUB l r]
+add_ :: Operand -> Operand -> SRW s e ()
+add_ l r = tellInstruction $ ADD l r
 
-imul_ :: Operand -> Operand -> CodeGen ()
-imul_ l r = tell [IMUL l r]
+sub_ :: Operand -> Operand -> SRW s e ()
+sub_ l r = tellInstruction $ SUB l r
 
-idiv_ :: Operand -> CodeGen ()
-idiv_ l = tell [IDIV l]
+imul_ :: Operand -> Operand -> SRW s e ()
+imul_ l r = tellInstruction $ IMUL l r
 
-push_ :: Operand -> CodeGen ()
-push_ l = tell [PUSH l]
+idiv_ :: Operand -> SRW s e ()
+idiv_ l = tellInstruction $ IDIV l
 
-pop_ :: Operand -> CodeGen ()
-pop_ l = tell [POP l]
+push_ :: Operand -> SRW s e ()
+push_ l = tellInstruction $ PUSH l
 
-mov_ :: Operand -> Operand -> CodeGen ()
-mov_ l r = tell [MOV l r]
+pop_ :: Operand -> SRW s e ()
+pop_ l = tellInstruction $ POP l
 
-cdq_ :: CodeGen ()
-cdq_ = tell [CDQ]
+mov_ :: Operand -> Operand -> SRW s e ()
+mov_ l r = tellInstruction $ MOV l r
 
-cmp_ :: Operand -> Operand -> CodeGen ()
-cmp_ l r = tell [CMP l r]
+cdq_ :: SRW s e ()
+cdq_ = tellInstruction CDQ
 
-jmp_ :: Label -> CodeGen ()
-jmp_ l = tell [JMP l]
+cmp_ :: Operand -> Operand -> SRW s e ()
+cmp_ l r = tellInstruction $ CMP l r
 
-jg_ :: Label -> CodeGen ()
-jg_ l = tell [JG l]
+jmp_ :: Label -> SRW s e ()
+jmp_ l = tellInstruction $ JMP l
 
-jge_ :: Label -> CodeGen ()
-jge_ l = tell [JGE l]
+jg_ :: Label -> SRW s e ()
+jg_ l = tellInstruction $ JG l
 
-jl_ :: Label -> CodeGen ()
-jl_ l = tell [JL l]
+jge_ :: Label -> SRW s e ()
+jge_ l = tellInstruction $ JGE l
 
-jle_ :: Label -> CodeGen ()
-jle_ l = tell [JLE l]
+jl_ :: Label -> SRW s e ()
+jl_ l = tellInstruction $ JL l
 
-jne_ :: Label -> CodeGen ()
-jne_ l = tell [JNE l]
+jle_ :: Label -> SRW s e ()
+jle_ l = tellInstruction $ JLE l
 
-je_ :: Label -> CodeGen ()
-je_ l = tell [JE l]
+jne_ :: Label -> SRW s e ()
+jne_ l = tellInstruction $ JNE l
 
-label_ :: Label -> CodeGen ()
-label_ l = tell [LABEL l]
+je_ :: Label -> SRW s e ()
+je_ l = tellInstruction $ JE l
 
-neg_ :: Operand -> CodeGen ()
-neg_ l = tell [NEG l]
+label_ :: Label -> SRW s e ()
+label_ l = tellInstruction $ LABEL l
 
-ret_ :: CodeGen ()
-ret_ = tell [RET]
+neg_ :: Operand -> SRW s e ()
+neg_ l = tellInstruction $ NEG l
 
-inc_ :: Operand -> CodeGen ()
-inc_ l = tell [INC l]
+ret_ :: SRW s e ()
+ret_ = tellInstruction RET
 
-dec_ :: Operand -> CodeGen ()
-dec_ l = tell [DEC l]
+inc_ :: Operand -> SRW s e ()
+inc_ l = tellInstruction $ INC l
+
+dec_ :: Operand -> SRW s e ()
+dec_ l = tellInstruction $ DEC l
+
+call_ :: Label -> SRW s e ()
+call_ n = tellInstruction $ CALL n

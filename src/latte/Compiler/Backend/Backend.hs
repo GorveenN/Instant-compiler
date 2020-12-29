@@ -1,14 +1,20 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module Compiler.Backend.Backend where
 
 import Compiler.Backend.CodeGen
 import Compiler.Backend.Tree
+import Control.Lens (makeLenses)
 import Control.Lens hiding
   ( Const,
     Empty,
     element,
   )
 import Control.Monad
-import Control.Monad.Fail (MonadFail, fail)
+import Control.Monad.Fail
+  ( MonadFail,
+    fail,
+  )
 import Control.Monad.Reader
   ( ReaderT,
     asks,
@@ -19,6 +25,7 @@ import Control.Monad.State
   ( StateT,
     evalStateT,
     get,
+    gets,
     modify,
   )
 import Control.Monad.Writer
@@ -30,21 +37,43 @@ import Control.Monad.Writer
   )
 import qualified Data.Map as Map
 
+type CodeGen d = SRW Store Env d
+
+data Env = Env
+  { _vars :: Map.Map String (Operand, Type),
+    _stackH :: Integer
+  }
+
+data Store = Store
+  { _labelCounter :: Integer,
+    _stringMap :: Map.Map String Label
+  }
+
+$(makeLenses ''Env)
+$(makeLenses ''Store)
+
 instance MonadFail Identity where
   fail = error "Fail"
 
-runCodeGen :: Program -> [Instruction]
+runCodeGen :: Program -> ([Instruction], [StringLiteral])
 runCodeGen program =
   execWriter $
     runReaderT
-      (evalStateT (emmitProgram program) 1)
-      (Store {_vars = Map.empty, _stackH = 0})
+      ( evalStateT
+          (emmitProgram program)
+          (Store {_labelCounter = 0, _stringMap = Map.empty})
+      )
+      (Env {_vars = Map.empty, _stackH = 0})
 
 immediateToOperand :: Operand -> Operand -> CodeGen Operand
 immediateToOperand r c@(Const _) = do
   mov_ c r
   return r
 immediateToOperand r o = return o
+
+immediateToOperandType o2 (o1, t) = do
+  o2' <- immediateToOperand o2 o1
+  return (o2', t)
 
 movIfNescessary :: Operand -> Operand -> CodeGen Operand
 movIfNescessary o1 o2 =
@@ -54,50 +83,60 @@ movIfNescessary o1 o2 =
       mov_ o2 o1
       return o1
 
-getVar :: String -> CodeGen Operand
-getVar n = do
-  i <- asks ((Map.! n) . _vars)
-  return $ Memory EBP (Just i)
+getVar :: String -> CodeGen (Operand, Type)
+getVar n = asks ((Map.! n) . _vars)
 
 -- result of Expr is packed in eax register or is a constant
-emmitExpr :: Expr -> CodeGen Operand
-emmitExpr (ELitInt i) = return $ Const i
-emmitExpr (EString s) = undefined
+emmitExpr :: Expr -> CodeGen (Operand, Type)
+emmitExpr (ELitInt i) = return (Const i, TypeInt)
+emmitExpr (EString s) = do
+  l <- insertString s
+  return (Label l, TypeStr)
 emmitExpr (EVar v) = getVar v
 emmitExpr (EApp n args) = do
-  mapM_ (emmitExpr >=> push_) (reverse args)
-  return eax_
+  mapM_ (emmitExpr >=> push_ . fst) (reverse args)
+  call_ n
+  add_ (Const (toInteger $ length args * 4)) esp_
+  asks ((Map.! n) . _vars)
 emmitExpr (Neg e) = do
-  op <- emmitExpr e >>= immediateToOperand eax_
+  (op, t) <- emmitExpr e >>= immediateToOperandType eax_
   neg_ op
-  return op
+  return (op, t)
 emmitExpr (Not e) = do
   [tlabel, flabel, endlabel] <- makeNLabels 3
   emmitLogic e (Just flabel) (Just tlabel)
-  emmitBoolEpilogue tlabel flabel endlabel
+  o <- emmitBoolEpilogue tlabel flabel endlabel
+  return (o, TypeBool)
 emmitExpr (EArithm e1 op e2) = case op of
   Plus -> addsub add_ e1 e2
   Minus -> addsub sub_ e1 e2
   Times -> addsub imul_ e1 e2
   Div -> do
     basediv e1 e2
-    return eax_
+    return (eax_, TypeInt)
   Mod -> do
     basediv e1 e2
     mov_ edx_ eax_
-    return eax_
+    return (eax_, TypeInt)
   where
     addsub ctr e1 e2 = do
-      push_ =<< emmitExpr e2
-      op1 <- emmitExpr e1 >>= immediateToOperand eax_
-      let op2 = edx_
-      pop_ op2
-      ctr op1 op2
-      return op2
+      push_ . fst =<< emmitExpr e2
+      (op1, t) <- emmitExpr e1 >>= immediateToOperandType eax_
+      case t of
+        TypeBool -> do
+          push_ op1
+          call_ "__str_concat"
+          add_ esp_ (Const 8)
+          return (eax_, TypeStr)
+        _ -> do
+          let op2 = edx_
+          pop_ op2
+          ctr op1 op2
+          return (op2, TypeInt)
 
     basediv e1 e2 = do
-      push_ =<< emmitExpr e2
-      op1 <- emmitExpr e1 >>= immediateToOperand eax_
+      push_ . fst =<< emmitExpr e2
+      op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
       let divisor = ebx_
       pop_ divisor
       cdq_
@@ -105,7 +144,8 @@ emmitExpr (EArithm e1 op e2) = case op of
 emmitExpr e@ELogic {} = do
   [tlabel, flabel, endlabel] <- makeNLabels 3
   emmitLogic e (Just tlabel) (Just flabel)
-  emmitBoolEpilogue tlabel flabel endlabel
+  op <- emmitBoolEpilogue tlabel flabel endlabel
+  return (op, TypeBool)
 
 emmitLogic :: Expr -> Maybe Label -> Maybe Label -> CodeGen ()
 emmitLogic (ELogic e1 op e2) ltrue lfalse = case op of
@@ -124,9 +164,9 @@ emmitLogic (ELogic e1 op e2) ltrue lfalse = case op of
 emmitLogic (Not e) ltrue lfalse = emmitLogic e lfalse ltrue
 
 cmpjmp instr1 instr2 label1 label2 e1 e2 = do
-  push_ =<< emmitExpr e2
-  op1 <- emmitExpr e1 >>= immediateToOperand eax_
-  let op2 = Register EBX Nothing
+  push_ . fst =<< emmitExpr e2
+  op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
+  let op2 = ebx_
   pop_ op2
   cmp_ op1 op2
   jmpIfJust instr1 label1
@@ -138,27 +178,28 @@ jmpIfJust instr label = case label of
 
 emmitBoolEpilogue tlabel flabel endlabel = do
   label_ tlabel
-  mov_ (Register EAX Nothing) (Const 1)
+  mov_ eax_ (Const 1)
   jmp_ endlabel
   label_ flabel
-  mov_ (Register EAX Nothing) (Const 0)
+  mov_ eax_ (Const 0)
   jmp_ endlabel
   label_ endlabel
-  return $ Register EAX Nothing
+  return eax_
 
-addVar :: String -> Operand -> CodeGen (Store -> Store)
-addVar n o = do
+addVar :: String -> Operand -> Type -> CodeGen (Env -> Env)
+addVar n o t = do
   push_ o
   addr <- asks _stackH
-  return $ over vars (Map.insert n $ addr + 4) . over stackH (+ 4)
+  return $
+    over vars (Map.insert n (Memory EBP (Just $ addr + 4), t))
+      . over stackH (+ 4)
 
 emmitStmt :: Stmt -> CodeGen ()
-emmitStmt (Block ss) =
-  emmitStmtList ss
+emmitStmt (Block ss) = emmitStmtList ss
   where
     emmitStmtList :: [Stmt] -> CodeGen ()
     emmitStmtList ((Decl t n e) : ss) = do
-      f <- emmitExpr e >>= addVar n
+      f <- emmitExpr e >>= uncurry (addVar n)
       local f (emmitStmtList ss)
     emmitStmtList (s : ss) = do
       emmitStmt s
@@ -166,12 +207,12 @@ emmitStmt (Block ss) =
     emmitStmtList [] = return ()
 -- Decl is handled by Block
 emmitStmt (Ass e1 e2) = do
-  emmitExpr e2 >>= push_
-  emmitExpr e1 >>= pop_
-emmitStmt (Incr e) = emmitExpr e >>= inc_
-emmitStmt (Decr e) = emmitExpr e >>= dec_
+  emmitExpr e2 >>= push_ . fst
+  emmitExpr e1 >>= pop_ . fst
+emmitStmt (Incr e) = emmitExpr e >>= inc_ . fst
+emmitStmt (Decr e) = emmitExpr e >>= dec_ . fst
 emmitStmt (Ret e) = do
-  emmitExpr e >>= movIfNescessary eax_
+  emmitExpr e >>= movIfNescessary eax_ . fst
   leave_ >> ret_
 emmitStmt VRet = leave_ >> ret_
 emmitStmt (Cond e s) = do
@@ -197,7 +238,6 @@ emmitStmt (While e s) = do
   emmitStmt s
   jmp_ condlabel
   label_ flabel
--- TODO
 emmitStmt (For t n e s) = undefined
 emmitStmt (SExp e) = void $ emmitExpr e
 
@@ -212,26 +252,48 @@ emmitTopDef (TopFnDef (FnDef type_ name args stmt)) = do
   label_ name
   enter_
   local f (emmitStmt stmt)
-  return ()
   where
     compose = foldr (.) id
-    argpos (TypedId _ name) p = over vars (Map.insert name p)
+    argpos (TypedId type_ name) p =
+      over vars (Map.insert name (Memory EBP $ Just p, type_))
 
 enter_ :: CodeGen ()
 enter_ = do
   push_ ebp_
-  mov_ (Register ESP Nothing) ebp_
+  mov_ esp_ ebp_
 
 leave_ :: CodeGen ()
 leave_ = do
-  mov_ ebp_ (Register ESP Nothing)
+  mov_ ebp_ esp_
   pop_ ebp_
 
+insertString :: String -> CodeGen Label
+insertString s = do
+  m <- gets _stringMap
+  case Map.lookup s m of
+    (Just l) -> return l
+    Nothing -> do
+      l <- makeLabel
+      tellStringLiteral (StringLiteral s l)
+      modify (over stringMap (Map.insert s l))
+      return l
+
 makeNLabels :: Integer -> CodeGen [Label]
-makeNLabels n = mapM (const makeLabel) [1 .. n]
+makeNLabels n = replicateM (fromInteger n) makeLabel
 
 makeLabel :: CodeGen Label
 makeLabel = do
-  a <- get
-  modify (+ 1)
+  a <- gets _labelCounter
+  modify (over labelCounter (+ 1))
   return $ "__label__" ++ show a
+
+cumpile :: Program -> [String]
+cumpile program = ".text" : strings ++ textPrologue ++ instrs
+  where
+    (instrs', strings') = runCodeGen program
+    strings = map show strings'
+    instrs = map show instrs'
+    textPrologue = [".text", ".globl main"]
+
+fConcatString :: String
+fConcatString = "__concat_string"
