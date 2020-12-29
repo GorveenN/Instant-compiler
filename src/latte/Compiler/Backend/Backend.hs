@@ -45,7 +45,8 @@ data Env = Env
   }
 
 data Store = Store
-  { _labelCounter :: Integer,
+  { _funs :: Map.Map String Type,
+    _labelCounter :: Integer,
     _stringMap :: Map.Map String Label
   }
 
@@ -61,7 +62,7 @@ runCodeGen program =
     runReaderT
       ( evalStateT
           (emmitProgram program)
-          (Store {_labelCounter = 0, _stringMap = Map.empty})
+          (Store {_funs = Map.empty, _labelCounter = 0, _stringMap = Map.empty})
       )
       (Env {_vars = Map.empty, _stackH = 0})
 
@@ -97,7 +98,8 @@ emmitExpr (EApp n args) = do
   mapM_ (emmitExpr >=> push_ . fst) (reverse args)
   call_ n
   add_ (Const (toInteger $ length args * 4)) esp_
-  asks ((Map.! n) . _vars)
+  t <- gets ((Map.! n) . _funs)
+  return (eax_, t)
 emmitExpr (Neg e) = do
   (op, t) <- emmitExpr e >>= immediateToOperandType eax_
   neg_ op
@@ -191,8 +193,10 @@ addVar n o t = do
   push_ o
   addr <- asks _stackH
   return $
-    over vars (Map.insert n (Memory EBP (Just $ addr + 4), t))
-      . over stackH (+ 4)
+    over vars (Map.insert n (Memory EBP (Just $ addr - 4), t))
+      . over
+        stackH
+        ((-) 4)
 
 emmitStmt :: Stmt -> CodeGen ()
 emmitStmt (Block ss) = emmitStmtList ss
@@ -241,19 +245,27 @@ emmitStmt (While e s) = do
 emmitStmt (For t n e s) = undefined
 emmitStmt (SExp e) = void $ emmitExpr e
 
+compose = foldr (.) id
+
 emmitProgram :: Program -> CodeGen ()
-emmitProgram (Program defs) = mapM_ emmitTopDef defs
+emmitProgram (Program defs) = do
+  let fd = filter isFun defs
+  let f = compose $ map (\(TopFnDef (FnDef t n _ _)) -> Map.insert n t) fd
+  modify (over funs f)
+  mapM_ emmitTopDef defs
+  where
+    isFun TopFnDef {} = True
+    isFun _ = False
 
 emmitTopDef :: TopDef -> CodeGen ()
 emmitTopDef (TopClassDef cls) = undefined
 emmitTopDef (TopFnDef (FnDef type_ name args stmt)) = do
-  let pos = (* (-4)) <$> [1 ..]
+  let pos = (* 4) <$> [2 ..]
   let f = compose $ zipWith argpos args pos
   label_ name
   enter_
-  local f (emmitStmt stmt)
+  local (f . over stackH (const 0)) (emmitStmt stmt)
   where
-    compose = foldr (.) id
     argpos (TypedId type_ name) p =
       over vars (Map.insert name (Memory EBP $ Just p, type_))
 
@@ -288,7 +300,7 @@ makeLabel = do
   return $ "__label__" ++ show a
 
 cumpile :: Program -> [String]
-cumpile program = ".text" : strings ++ textPrologue ++ instrs
+cumpile program = ".data" : strings ++ textPrologue ++ instrs
   where
     (instrs', strings') = runCodeGen program
     strings = map show strings'
