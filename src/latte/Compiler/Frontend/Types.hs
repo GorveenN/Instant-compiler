@@ -129,10 +129,7 @@ instance Show (StaticException (Maybe (Int, Int))) where
       ++ show i
       ++ "."
   show (NewOnNonClassType (Just (line, column)) t) =
-    positionString line column
-      ++ "Call new on non class type "
-      ++ show t
-      ++ "."
+    positionString line column ++ "Call new on non class type " ++ show t ++ "."
   show (NoReturn (Just (line, column)) i) =
     positionString line column
       ++ "Function "
@@ -162,10 +159,7 @@ instance Show (StaticException (Maybe (Int, Int))) where
   show (TypeNotDefined (Just (line, column)) t) =
     positionString line column ++ "Type " ++ show t ++ " is not defined."
   show (VariableNotInScope (Just (line, column)) i) =
-    positionString line column
-      ++ "Variable "
-      ++ show i
-      ++ " is not defined."
+    positionString line column ++ "Variable " ++ show i ++ " is not defined."
   show (VoidField (Just (line, column))) =
     positionString line column ++ "Void class field."
   show (WrongNumberOfArguments (Just (line, column)) i1 i2) =

@@ -153,19 +153,17 @@ transStmt (A.Incr _ e) = [Incr $ transExpr e]
 transStmt (A.Decr _ e) = [Decr $ transExpr e]
 transStmt (A.Ret _ e) = [Ret $ transExpr e]
 transStmt (A.VRet _) = [VRet]
-transStmt (A.Cond _ e s) =
-  case e' of
-    (ELitInt 1) -> [s']
-    (ELitInt 0) -> []
-    _ -> [Cond (transExpr e) (transStmtToBlock s)]
+transStmt (A.Cond _ e s) = case e' of
+  (ELitInt 1) -> [s']
+  (ELitInt 0) -> []
+  _ -> [Cond (transExpr e) (transStmtToBlock s)]
   where
     e' = transExpr e
     s' = transStmtToBlock s
-transStmt (A.CondElse _ e s1 s2) =
-  case e' of
-    (ELitInt 1) -> [s1']
-    (ELitInt 0) -> [s2']
-    _ -> [CondElse e' s1' s2']
+transStmt (A.CondElse _ e s1 s2) = case e' of
+  (ELitInt 1) -> [s1']
+  (ELitInt 0) -> [s2']
+  _ -> [CondElse e' s1' s2']
   where
     e' = transExpr e
     s1' = transStmtToBlock s1
@@ -218,10 +216,9 @@ transExpr (A.ELitFalse _) = ELitInt 0
 transExpr (A.EString _ s) = EString (tail $ init s)
 transExpr (A.EApp _ i exprs) = EApp (transIdent i) (map transExpr exprs)
 transExpr (A.EAccess _ e1 e2) = EAccess (transExpr e1) (transExpr e2)
-transExpr (A.Neg _ e) =
-  case e' of
-    (ELitInt i) -> ELitInt (- i)
-    _ -> Neg e'
+transExpr (A.Neg _ e) = case e' of
+  (ELitInt i) -> ELitInt (- i)
+  _ -> Neg e'
   where
     e' = transExpr e
 transExpr (A.Not _ e) = Not $ transExpr e
@@ -236,11 +233,10 @@ transExpr (A.EAdd _ e1 op e2) = simplifyAddMul transAddOp fop e1 op e2
     fop x = case x of
       Plus -> (+)
       Minus -> (-)
-transExpr (A.ERel _ e1 op e2) =
-  case (e1', e2') of
-    (ELitInt i1, ELitInt i2) -> boolToExpr $ fop e1' e2'
-    (EString i1, EString i2) -> boolToExpr $ fop e1' e2'
-    _ -> ELogic e1' op' e2'
+transExpr (A.ERel _ e1 op e2) = case (e1', e2') of
+  (ELitInt i1, ELitInt i2) -> boolToExpr $ fop e1' e2'
+  (EString i1, EString i2) -> boolToExpr $ fop e1' e2'
+  _ -> ELogic e1' op' e2'
   where
     e1' = transExpr e1
     e2' = transExpr e2
@@ -255,33 +251,29 @@ transExpr (A.ERel _ e1 op e2) =
     boolToExpr :: Bool -> Expr
     boolToExpr False = ELitInt 0
     boolToExpr True = ELitInt 1
-transExpr (A.EAnd _ e1 e2) =
-  case (e1', e2') of
-    (ELitInt 1, other) -> other
-    (ELitInt 0, _) -> ELitInt 0
-    (other, ELitInt 1) -> other
-    (_, ELitInt 0) -> ELitInt 0
-    _ -> ELogic e1' AND e2'
+transExpr (A.EAnd _ e1 e2) = case (e1', e2') of
+  (ELitInt 1, other) -> other
+  (ELitInt 0, _) -> ELitInt 0
+  (other, ELitInt 1) -> other
+  (_, ELitInt 0) -> ELitInt 0
+  _ -> ELogic e1' AND e2'
   where
     e1' = transExpr e1
     e2' = transExpr e2
-transExpr (A.EOr _ e1 e2) =
-  case (e1', e2') of
-    (ELitInt 0, other) -> other
-    (ELitInt 1, _) -> ELitInt 1
-    (other, ELitInt 0) -> other
-    (_, ELitInt 1) -> ELitInt 1
-    _ -> ELogic e1' OR e2'
+transExpr (A.EOr _ e1 e2) = case (e1', e2') of
+  (ELitInt 0, other) -> other
+  (ELitInt 1, _) -> ELitInt 1
+  (other, ELitInt 0) -> other
+  (_, ELitInt 1) -> ELitInt 1
+  _ -> ELogic e1' OR e2'
   where
     e1' = transExpr e1
     e2' = transExpr e2
 transExpr (A.ECast _ _) = ELitInt 0
 
-simplifyAddMul f1 f2 e1 op e2 =
-  case (e1', e2') of
-    (ELitInt i1, ELitInt i2) ->
-      ELitInt (fop i1 i2)
-    _ -> EArithm e1' op' e2'
+simplifyAddMul f1 f2 e1 op e2 = case (e1', e2') of
+  (ELitInt i1, ELitInt i2) -> ELitInt (fop i1 i2)
+  _ -> EArithm e1' op' e2'
   where
     op' = f1 op
     fop = f2 op'

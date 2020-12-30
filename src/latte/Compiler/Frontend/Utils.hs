@@ -211,8 +211,7 @@ superFieldsMethods name = do
             let f = Map.assocs fields
             let m = Map.keys methods
             (restf, restm) <- case super of
-              Just super ->
-                _superFieldsMethods super
+              Just super -> _superFieldsMethods super
               Nothing -> return ([], [])
             return (f ++ restf, m ++ restm)
         _ -> return ([], [])

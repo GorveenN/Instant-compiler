@@ -114,8 +114,7 @@ checkMethodRedefinition pos name ret args = do
         Just (ft, fargs) -> do
           let f1 = (ret, map fst args)
           let f2 = (ft, map fst fargs)
-          unless (f1 == f2) $
-            throwError (RedefinitionOfSymbol pos name)
+          unless (f1 == f2) $ throwError (RedefinitionOfSymbol pos name)
         _ -> return ()
     _ -> return ()
 
@@ -235,8 +234,7 @@ checkClassMember x = case x of
     checkIdentUnique zipped
     mapM_ (uncurry throwIfFunctionDefined) zipped
     mapM_ (uncurry throwIfVariableDefined) zipped
-    let functions =
-          map (\x -> over varMap (Map.insert x (ttype, lvl))) idents
+    let functions = map (\x -> over varMap (Map.insert x (ttype, lvl))) idents
     return $ foldr (.) id functions
   ClassMethod _ fndef -> checkFnDef fndef
 
@@ -274,10 +272,7 @@ checkClassDef x = case x of
             id
             fields
     let methodsF =
-          foldr
-            ((.) . \i -> over funMap (Map.insert i (lvl + 1)))
-            id
-            methods
+          foldr ((.) . \i -> over funMap (Map.insert i (lvl + 1))) id methods
 
     let self =
           over
@@ -379,13 +374,12 @@ checkStmt x = case x of
         unless (a == typet) $
           throwError $
             TypeMismatch pos typet $
-              T.TypeArray a
+              T.TypeArray
+                a
       _ -> throwError $ TypeMismatch pos exprt $ T.TypeArray typet
     lvl <- asks _nestLvl
     local
-      ( over varMap (Map.insert ident (typet, lvl + 1))
-          . over nestLvl (+ 1)
-      )
+      (over varMap (Map.insert ident (typet, lvl + 1)) . over nestLvl (+ 1))
       (checkStmt stmt)
     return False
   SExp _ expr -> do
@@ -460,8 +454,7 @@ checkExpr x = case x of
                 >>= lookupFail (FunctionNotInScope pos ident)
             case Map.lookup ident methods of
               Just b -> return b
-              Nothing ->
-                throwError (FunctionNotInScope pos ident)
+              Nothing -> throwError (FunctionNotInScope pos ident)
           Nothing -> throwError (FunctionNotInScope pos ident)
     throwIfArgumentsMismatch pos (map fst args) exprs
     return ttype
@@ -544,9 +537,7 @@ signatureClass x = case x of
   where
     fields mem =
       concatMap
-        ( \(ClassField _ t idents) ->
-            zip idents (repeat $ signatureType t)
-        )
+        (\(ClassField _ t idents) -> zip idents (repeat $ signatureType t))
         $ filter isField mem
     methods mem =
       map (\(ClassMethod _ fndef) -> signatureFunction fndef) $

@@ -1,8 +1,14 @@
 module Compiler.Backend.CodeGen where
 
 import Control.Lens (makeLenses)
-import Control.Monad.Reader (ReaderT, runReaderT)
-import Control.Monad.State (StateT, evalStateT)
+import Control.Monad.Reader
+  ( ReaderT,
+    runReaderT,
+  )
+import Control.Monad.State
+  ( StateT,
+    evalStateT,
+  )
 import Control.Monad.Writer
   ( Writer,
     WriterT,
@@ -115,7 +121,8 @@ instance Show Instruction where
   show (DEC l) = "dec " ++ show l
   show RET = "ret"
 
-type SRW s e d = StateT s (ReaderT e (Writer ([Instruction], [StringLiteral]))) d
+type SRW s e d =
+  StateT s (ReaderT e (Writer ([Instruction], [StringLiteral]))) d
 
 data StringLiteral = StringLiteral String Label
 
