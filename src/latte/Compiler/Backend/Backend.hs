@@ -122,19 +122,19 @@ emmitExpr (EArithm e1 op e2) = case op of
     return (eax_, TypeInt)
   where
     addsub ctr e1 e2 = do
-      push_ . fst =<< emmitExpr e2
-      (op1, t) <- emmitExpr e1 >>= immediateToOperandType eax_
+      push_ . fst =<< emmitExpr e1
+      (op2, t) <- emmitExpr e2 >>= immediateToOperandType eax_
       case t of
-        TypeBool -> do
-          push_ op1
+        TypeStr -> do
+          push_ op2
           call_ "__str_concat"
           add_ esp_ (Const 8)
           return (eax_, TypeStr)
         _ -> do
-          let op2 = edx_
-          pop_ op2
-          ctr op1 op2
-          return (op2, TypeInt)
+          let op1 = edx_
+          pop_ op1
+          ctr op2 op1
+          return (op1, TypeInt)
 
     basediv e1 e2 = do
       push_ . fst =<< emmitExpr e2
