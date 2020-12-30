@@ -89,6 +89,10 @@ getVar n = asks ((Map.! n) . _vars)
 
 -- result of Expr is packed in eax register or is a constant
 emmitExpr :: Expr -> CodeGen (Operand, Type)
+emmitExpr (ENewObject t) = undefined
+emmitExpr (ENewArray t e) = undefined
+emmitExpr (EField e i) = undefined
+emmitExpr (EMethodCall e i args) = undefined
 emmitExpr (ELitInt i) = return (Const i, TypeInt)
 emmitExpr (EString s) = do
   l <- insertString s
@@ -128,7 +132,7 @@ emmitExpr (EArithm e1 op e2) = case op of
         TypeStr -> do
           push_ op2
           call_ "__str_concat"
-          add_ esp_ (Const 8)
+          add_ (Const 8) esp_
           return (eax_, TypeStr)
         _ -> do
           let op1 = edx_
@@ -164,13 +168,15 @@ emmitLogic (ELogic e1 op e2) ltrue lfalse = case op of
     emmitLogic e1 ltrue Nothing
     emmitLogic e2 ltrue lfalse
 emmitLogic (Not e) ltrue lfalse = emmitLogic e lfalse ltrue
+emmitLogic e ltrue lfalse =
+  emmitLogic (ELogic e EQU (ELitInt 1)) ltrue lfalse
 
 cmpjmp instr1 instr2 label1 label2 e1 e2 = do
   push_ . fst =<< emmitExpr e2
   op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
   let op2 = ebx_
   pop_ op2
-  cmp_ op1 op2
+  cmp_ op2 op1
   jmpIfJust instr1 label1
   jmpIfJust instr2 label2
 
@@ -180,10 +186,10 @@ jmpIfJust instr label = case label of
 
 emmitBoolEpilogue tlabel flabel endlabel = do
   label_ tlabel
-  mov_ eax_ (Const 1)
+  mov_ (Const 1) eax_
   jmp_ endlabel
   label_ flabel
-  mov_ eax_ (Const 0)
+  mov_ (Const 0) eax_
   jmp_ endlabel
   label_ endlabel
   return eax_
@@ -196,7 +202,7 @@ addVar n o t = do
     over vars (Map.insert n (Memory EBP (Just $ addr - 4), t))
       . over
         stackH
-        ((-) 4)
+        (\x -> x - 4)
 
 emmitStmt :: Stmt -> CodeGen ()
 emmitStmt (Block ss) = emmitStmtList ss
@@ -211,6 +217,8 @@ emmitStmt (Block ss) = emmitStmtList ss
     emmitStmtList [] = return ()
 -- Decl is handled by Block
 emmitStmt (Ass e1 e2) = do
+  -- consts does not need to be pushed and then poped
+  -- just mov them
   emmitExpr e2 >>= push_ . fst
   emmitExpr e1 >>= pop_ . fst
 emmitStmt (Incr e) = emmitExpr e >>= inc_ . fst

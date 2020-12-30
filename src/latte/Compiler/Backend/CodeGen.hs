@@ -127,7 +127,7 @@ type SRW s e d =
 data StringLiteral = StringLiteral String Label
 
 instance Show StringLiteral where
-  show (StringLiteral s l) = l ++ ":\n" ++ ".string " ++ show s
+  show (StringLiteral s l) = l ++ ":\n" ++ ".string \"" ++ s ++ "\""
 
 tellInstruction :: Instruction -> SRW s e ()
 tellInstruction xs = tell ([xs], mempty)

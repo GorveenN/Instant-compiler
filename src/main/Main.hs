@@ -14,7 +14,9 @@ import ParLatte
 import PrintLatte
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
+import System.FilePath
 import System.IO (hPrint, hPutStrLn, stderr)
+import System.Process
 
 type ParseFun a = [Token] -> Err a
 
@@ -25,9 +27,10 @@ type Verbosity = Int
 putStrV :: Verbosity -> String -> IO ()
 putStrV v s = when (v > 1) $ putStrLn s
 
-runFile v p f = readFile f >>= run v p
+-- runFile v p f = readFile f >>= run v p
+runFile p f = readFile f >>= run p f
 
-run v p s =
+run p n s =
   case p (myLexer s) of
     Bad s -> do
       hPutStrLn stderr "ERROR"
@@ -41,8 +44,15 @@ run v p s =
           hPutStrLn stderr ("Static check failed\n" ++ show exc)
           exitFailure
         (Right ()) -> do
-          mapM_ putStrLn $ cumpile $ transProgram tree
-          hPutStrLn stderr "Ok"
+          let dots = replaceExtension n "s"
+          let doto = replaceExtension n "o"
+          let base = dropExtension n
+          let prog = cumpile $ transProgram tree
+          writeFile dots $ unlines prog
+          callCommand "gcc -g -m32 -o build/runtime.o -c build/runtime.c"
+          callCommand $ "gcc -g -m32 -o " ++ doto ++ " -c " ++ dots
+          callCommand $ "gcc -g -m32 -o " ++ base ++ " " ++ doto ++ " build/runtime.o"
+          -- hPutStrLn stderr "Ok"
           exitSuccess
 
 showTree :: (Show a, Print a) => Int -> a -> IO ()
@@ -50,23 +60,7 @@ showTree v tree = do
   putStrV v $ "\n[Abstract Syntax]\n\n" ++ show tree
   putStrV v $ "\n[Linearized tree]\n\n" ++ printTree tree
 
-usage :: IO ()
-usage = do
-  putStrLn $
-    unlines
-      [ "usage: Call with one of the following argument combinations:",
-        "  --help          Display this help message.",
-        "  (no arguments)  Parse stdin verbosely.",
-        "  (files)         Parse content of files verbosely.",
-        "  -s (files)      Silent mode. Parse content of files silently."
-      ]
-  exitFailure
-
 main :: IO ()
 main = do
   args <- getArgs
-  case args of
-    ["--help"] -> usage
-    [] -> getContents >>= run 2 pProgram
-    "-s" : fs -> mapM_ (runFile 0 pProgram) fs
-    fs -> mapM_ (runFile 2 pProgram) fs
+  mapM_ (runFile pProgram) args

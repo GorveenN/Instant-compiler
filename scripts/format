@@ -1,0 +1,2 @@
+brittany --write-mode=inplace $(find src/latte -name '*.hs')
+ormolu --mode inplace $(find src/latte -name '*.hs')

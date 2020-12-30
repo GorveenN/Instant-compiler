@@ -143,6 +143,11 @@ transBlock (A.Block _ ss) = Block (concatMap transStmt ss)
 transStmtToBlock (A.BStmt _ block) = transBlock block
 transStmtToBlock a = Block $ transStmt a
 
+toLogic :: Expr -> Expr
+toLogic e@ELogic {} = e
+toLogic (Not e) = ELogic e EQU (ELitInt 0)
+toLogic e = ELogic e EQU (ELitInt 1)
+
 transStmt :: Show a => A.Stmt a -> [Stmt]
 transStmt (A.Empty _) = []
 transStmt (A.BStmt _ block) = [transBlock block]
@@ -156,19 +161,19 @@ transStmt (A.VRet _) = [VRet]
 transStmt (A.Cond _ e s) = case e' of
   (ELitInt 1) -> [s']
   (ELitInt 0) -> []
-  _ -> [Cond (transExpr e) (transStmtToBlock s)]
+  _ -> [Cond (toLogic e') (transStmtToBlock s)]
   where
     e' = transExpr e
     s' = transStmtToBlock s
 transStmt (A.CondElse _ e s1 s2) = case e' of
   (ELitInt 1) -> [s1']
   (ELitInt 0) -> [s2']
-  _ -> [CondElse e' s1' s2']
+  _ -> [CondElse (toLogic e') s1' s2']
   where
     e' = transExpr e
     s1' = transStmtToBlock s1
     s2' = transStmtToBlock s2
-transStmt (A.While _ e s) = [While (transExpr e) (transStmtToBlock s)]
+transStmt (A.While _ e s) = [While (toLogic $ transExpr e) (transStmtToBlock s)]
 transStmt (A.For _ type_ name e s) =
   [ For
       (transNonVoidType type_)
