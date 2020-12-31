@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Compiler.Backend.Backend where
@@ -168,10 +169,10 @@ emmitExpr (EArithm e1 op e2) = case op of
     basediv e1 e2 = do
       push_ . fst =<< emmitExpr e2
       op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
-      let divisor = ebx_
-      pop_ divisor
+      when (op1 /= eax_) (mov_ op1 eax_)
       cdq_
-      idiv_ divisor
+      pop_ ebx_
+      idiv_ ebx_
 emmitExpr e@ELogic {} = do
   [tlabel, flabel, endlabel] <- makeNLabels 3
   emmitLogic e (Just tlabel) (Just flabel)
@@ -229,7 +230,10 @@ addVar n o t = do
         (\x -> x - 4)
 
 emmitStmt :: Stmt -> CodeGen ()
-emmitStmt (Block ss) = emmitStmtList ss
+emmitStmt (Block ss) = do
+  emmitStmtList ss
+  let nd = numDecl ss
+  when (nd /= 0 && not (isRetBlock ss)) (add_ (Const $ nd * 4) esp_)
   where
     emmitStmtList :: [Stmt] -> CodeGen ()
     emmitStmtList ((Decl t n e) : ss) = do
@@ -239,6 +243,20 @@ emmitStmt (Block ss) = emmitStmtList ss
       emmitStmt s
       emmitStmtList ss
     emmitStmtList [] = return ()
+    numDecl a =
+      toInteger $
+        length $
+          filter
+            ( \case
+                Decl {} -> True
+                _ -> False
+            )
+            a
+    isRetBlock :: [Stmt] -> Bool
+    isRetBlock = _isRetBlock . reverse
+    _isRetBlock (VRet : _) = True
+    _isRetBlock ((Ret _) : _) = True
+    _isRetBlock _ = False
 -- Decl is handled by Block
 emmitStmt (Ass e1 e2) = do
   -- consts does not need to be pushed and then poped
