@@ -62,9 +62,22 @@ runCodeGen program =
     runReaderT
       ( evalStateT
           (emmitProgram program)
-          (Store {_funs = Map.empty, _labelCounter = 0, _stringMap = Map.empty})
+          ( Store
+              { _funs = Map.fromList builtInFuns,
+                _labelCounter = 0,
+                _stringMap = Map.empty
+              }
+          )
       )
       (Env {_vars = Map.empty, _stackH = 0})
+  where
+    builtInFuns =
+      [ ("readString", TypeStr),
+        ("readInt", TypeInt),
+        ("printString", Void),
+        ("printInt", Void),
+        ("error", Void)
+      ]
 
 immediateToOperand :: Operand -> Operand -> CodeGen Operand
 immediateToOperand r c@(Const _) = do
@@ -74,6 +87,18 @@ immediateToOperand r o = return o
 
 immediateToOperandType o2 (o1, t) = do
   o2' <- immediateToOperand o2 o1
+  return (o2', t)
+
+moveToRegister :: Operand -> Operand -> CodeGen Operand
+moveToRegister t@(Register a) f@(Register b) = do
+  when (a /= b) (mov_ f t)
+  return t
+moveToRegister t f = do
+  mov_ f t
+  return t
+
+moveToRegisterType o2 (o1, t) = do
+  o2' <- moveToRegister o2 o1
   return (o2', t)
 
 movIfNescessary :: Operand -> Operand -> CodeGen Operand
@@ -126,17 +151,17 @@ emmitExpr (EArithm e1 op e2) = case op of
     return (eax_, TypeInt)
   where
     addsub ctr e1 e2 = do
-      push_ . fst =<< emmitExpr e1
-      (op2, t) <- emmitExpr e2 >>= immediateToOperandType eax_
+      push_ . fst =<< emmitExpr e2
+      (op1, t) <- emmitExpr e1 >>= moveToRegisterType eax_
       case t of
         TypeStr -> do
-          push_ op2
+          push_ op1
           call_ "__str_concat"
           add_ (Const 8) esp_
           return (eax_, TypeStr)
         _ -> do
-          let op1 = edx_
-          pop_ op1
+          let op2 = edx_
+          pop_ op2
           ctr op2 op1
           return (op1, TypeInt)
 
@@ -168,8 +193,7 @@ emmitLogic (ELogic e1 op e2) ltrue lfalse = case op of
     emmitLogic e1 ltrue Nothing
     emmitLogic e2 ltrue lfalse
 emmitLogic (Not e) ltrue lfalse = emmitLogic e lfalse ltrue
-emmitLogic e ltrue lfalse =
-  emmitLogic (ELogic e EQU (ELitInt 1)) ltrue lfalse
+emmitLogic e ltrue lfalse = emmitLogic (ELogic e EQU (ELitInt 1)) ltrue lfalse
 
 cmpjmp instr1 instr2 label1 label2 e1 e2 = do
   push_ . fst =<< emmitExpr e2

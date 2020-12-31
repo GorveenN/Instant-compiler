@@ -173,7 +173,8 @@ transStmt (A.CondElse _ e s1 s2) = case e' of
     e' = transExpr e
     s1' = transStmtToBlock s1
     s2' = transStmtToBlock s2
-transStmt (A.While _ e s) = [While (toLogic $ transExpr e) (transStmtToBlock s)]
+transStmt (A.While _ e s) =
+  [While (toLogic $ transExpr e) (transStmtToBlock s)]
 transStmt (A.For _ type_ name e s) =
   [ For
       (transNonVoidType type_)

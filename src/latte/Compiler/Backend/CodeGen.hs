@@ -117,8 +117,8 @@ instance Show Instruction where
   show (LABEL l) = l ++ ":"
   show (CALL l) = "call " ++ l
   show (NEG l) = "neg " ++ show l
-  show (INC l) = "inc " ++ show l
-  show (DEC l) = "dec " ++ show l
+  show (INC l) = "incl " ++ show l
+  show (DEC l) = "decl " ++ show l
   show RET = "ret"
 
 type SRW s e d =
