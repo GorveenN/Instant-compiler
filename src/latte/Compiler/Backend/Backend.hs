@@ -171,8 +171,10 @@ emmitExpr (EArithm e1 op e2) = case op of
       op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
       when (op1 /= eax_) (mov_ op1 eax_)
       cdq_
-      pop_ ebx_
-      idiv_ ebx_
+      let divisor = ecx_
+      pop_ divisor
+      -- division result stays in eax
+      idiv_ divisor
 emmitExpr e@ELogic {} = do
   [tlabel, flabel, endlabel] <- makeNLabels 3
   emmitLogic e (Just tlabel) (Just flabel)
@@ -199,7 +201,7 @@ emmitLogic e ltrue lfalse = emmitLogic (ELogic e EQU (ELitInt 1)) ltrue lfalse
 cmpjmp instr1 instr2 label1 label2 e1 e2 = do
   push_ . fst =<< emmitExpr e2
   op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
-  let op2 = ebx_
+  let op2 = ecx_
   pop_ op2
   cmp_ op2 op1
   jmpIfJust instr1 label1

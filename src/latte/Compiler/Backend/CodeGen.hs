@@ -41,6 +41,9 @@ instance Show Register where
 eax_ :: Operand
 eax_ = Register EAX
 
+ecx_ :: Operand
+ecx_ = Register ECX
+
 esp_ :: Operand
 esp_ = Register ESP
 

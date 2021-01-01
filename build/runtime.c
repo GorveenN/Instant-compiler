@@ -56,5 +56,8 @@ char *readString()
 
 int readInt()
 {
-	return 1;
+	char *input = readString();
+	int read_value = atoi(input);
+	free(input);
+	return read_value;
 }
