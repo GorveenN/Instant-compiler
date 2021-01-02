@@ -67,8 +67,6 @@ data Operand
   | Label Label
   deriving (Eq)
 
--- instance Show
-
 instance Show Operand where
   show (Register r) = show r
   show (Memory r (Just o)) = show o ++ "(" ++ show r ++ ")"

@@ -36,19 +36,21 @@ import Control.Monad.Writer
     runWriter,
     tell,
   )
+import Data.List (sortBy)
 import qualified Data.Map as Map
 
 type CodeGen d = SRW Store Env d
 
 data Env = Env
-  { _vars :: Map.Map String (Operand, Type),
+  { _vars :: Map.Map Id (Operand, Type),
     _stackH :: Integer
   }
 
 data Store = Store
-  { _funs :: Map.Map String Type,
+  { _funs :: Map.Map Id Type,
     _labelCounter :: Integer,
-    _stringMap :: Map.Map String Label
+    _stringMap :: Map.Map Id Label,
+    _classes :: Map.Map Id (Map.Map Id Offset, Map.Map Id Offset)
   }
 
 $(makeLenses ''Env)
@@ -66,7 +68,8 @@ runCodeGen program =
           ( Store
               { _funs = Map.fromList builtInFuns,
                 _labelCounter = 0,
-                _stringMap = Map.empty
+                _stringMap = Map.empty,
+                _classes = Map.empty
               }
           )
       )
@@ -157,7 +160,7 @@ emmitExpr (EArithm e1 op e2) = case op of
       case t of
         TypeStr -> do
           push_ op1
-          call_ "__str_concat"
+          call_ fConcatString
           add_ (Const 8) esp_
           return (eax_, TypeStr)
         _ -> do
@@ -308,6 +311,86 @@ emmitProgram (Program defs) = do
   where
     isFun TopFnDef {} = True
     isFun _ = False
+
+buildClassHierchy :: [ClassDef] -> Map.Map ClassDef [ClassDef]
+buildClassHierchy s = classHierarchy
+  where
+    isBaseclass :: ClassDef -> Bool
+    isBaseclass Class {} = True
+    isBaseclass _ = False
+    childClass (Class n _) = Map.insertWith (++) n []
+    childClass c@(ClassInh _ i _) = Map.insertWith (++) i [c]
+    name (Class n _) = n
+    name (ClassInh n _ _) = n
+    comp c1 c2 = compare (name c1) (name c2)
+
+    baseclasses = filter isBaseclass s
+    classmap = foldr childClass Map.empty s
+    pairsList =
+      zipWith (\x (_, ss) -> (x, ss)) (sortBy comp s) (Map.assocs classmap)
+    classHierarchy = Map.fromList pairsList
+
+traverseClassTree ::
+  Map.Map ClassDef [ClassDef] ->
+  ClassDef ->
+  Map.Map Id (Id, Integer) ->
+  Integer ->
+  [TypedId] ->
+  CodeGen ()
+traverseClassTree m cls imethods nummeth ifield = do
+  -- gen vtable
+  let newFields = ifield ++ fields
+  let (newVTable, newNumMeth) = updateVTable methods imethods nummeth
+  emmitClassInit name newFields
+  -- should return
+  return ()
+  where
+    getFields (Class _ (ClassBlock f _)) = f
+    getFields (ClassInh _ _ (ClassBlock f _)) = f
+    getMethods (Class _ (ClassBlock _ m)) = m
+    getMethods (ClassInh _ _ (ClassBlock _ m)) = m
+    getClassname (Class n _) = n
+    getClassname (ClassInh n _ _) = n
+
+    name = getClassname cls
+    fields = getFields cls
+    methods = getMethods cls
+    children = m Map.! cls
+
+    updateVTable :: [FnDef] -> Map.Map Id (Id, Integer) -> Integer -> (Map.Map Id (Id, Integer), Integer)
+    updateVTable fndefs vtable maxaddr = foldr updater (vtable, maxaddr) fndefs
+    updater (FnDef _ n _ _) (m, i) = case Map.lookup n m of
+      Just (_, offset) -> (Map.insert n (name, offset) m, i)
+      Nothing -> (Map.insert n (name, i) m, i + 4)
+
+emmitVTable :: Map.Map Id (Id, Integer) -> CodeGen ()
+emmitVTable _ = return ()
+
+emmitClassInit :: Id -> [TypedId] -> CodeGen ()
+emmitClassInit n s = do
+  label_ $ n ++ "::new"
+  push_ ebx_
+  push_ $ Const (toInteger $ 4 * length s)
+  call_ "__malloc"
+  add_ (Const 4) esp_
+  mov_ eax_ ebx_
+  let adresses = map (Memory EBX . Just) [0 ..]
+  zipWithM_ emmitTypedId adresses s
+  mov_ ebx_ eax_
+  pop_ ebx_
+  ret_
+  return ()
+  where
+    emmitTypedId :: Operand -> TypedId -> CodeGen ()
+    emmitTypedId o (TypedId TypeInt _) = mov_ (Const 0) o
+    emmitTypedId o (TypedId TypeBool _) = mov_ (Const 0) o
+    emmitTypedId o (TypedId TypeStr _) = do
+      l <- insertString ""
+      mov_ (Label l) o
+    emmitTypedId o (TypedId (TypeClass n) _) = do
+      call_ $ n ++ "::new"
+      mov_ eax_ o
+    emmitTypedId o (TypedId (TypeArray _) _) = undefined
 
 emmitTopDef :: TopDef -> CodeGen ()
 emmitTopDef (TopClassDef cls) = undefined
