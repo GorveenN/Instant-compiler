@@ -12,7 +12,7 @@ void printString(char *string)
 	printf("%s\n", string);
 }
 
-char *__str_concat(char *s1, char *s2)
+char *__concat_string(char *s1, char *s2)
 {
 	size_t s1_len = strlen(s1);
 	size_t s2_len = strlen(s2);
