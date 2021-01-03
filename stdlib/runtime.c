@@ -2,6 +2,19 @@
 #include <string.h>
 #include <stdlib.h>
 
+void *__malloc(size_t size)
+{
+	void *ptr = malloc(size);
+	if (!ptr)
+	{
+		exit(0);
+	}
+	else
+	{
+		return ptr;
+	}
+}
+
 void printInt(int x)
 {
 	printf("%d\n", x);
@@ -31,11 +44,7 @@ char *readString()
 	int ch;
 	size_t size = 256;
 	size_t len = 0;
-	char *str = malloc(sizeof(char) * size); //size is start size
-	if (!str)
-	{
-		exit(1);
-	}
+	char *str = __malloc(sizeof(char) * size); //size is start size
 
 	while (EOF != (ch = fgetc(stdin)) && ch != '\n')
 	{

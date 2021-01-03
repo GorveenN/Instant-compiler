@@ -66,6 +66,7 @@ data Operand
   | Memory Register (Maybe Offset)
   | Const Integer
   | Label Label
+  | Dereference Register
   deriving (Eq)
 
 instance Show Operand where
@@ -74,6 +75,7 @@ instance Show Operand where
   show (Memory r Nothing) = "(" ++ show r ++ ")"
   show (Const i) = "$" ++ show i
   show (Label l) = "$" ++ l
+  show (Dereference l) = "*(" ++ show l ++ ")"
 
 data Instruction
   = IDIV Operand
@@ -93,7 +95,7 @@ data Instruction
   | JLE Label
   | JNE Label
   | LABEL Label
-  | CALL Label
+  | CALL Operand
   | NEG Operand
   | INC Operand
   | DEC Operand
@@ -117,7 +119,8 @@ instance Show Instruction where
   show (JLE l) = "jle " ++ l
   show (JNE l) = "jne " ++ l
   show (LABEL l) = l ++ ":"
-  show (CALL l) = "call " ++ l
+  show (CALL (Label l)) = "call " ++ l
+  show (CALL l) = "call " ++ show l
   show (NEG l) = "neg " ++ show l
   show (INC l) = "incl " ++ show l
   show (DEC l) = "decl " ++ show l
@@ -130,7 +133,10 @@ instance Show VTable where
     classname ++ "::VTable: .int " ++ intercalate ", " methods
 
 type SRW s e d =
-  StateT s (ReaderT e (Writer ([Instruction], [StringLiteral], [VTable]))) d
+  StateT
+    s
+    (ReaderT e (WriterT ([Instruction], [StringLiteral], [VTable]) IO))
+    d
 
 data StringLiteral = StringLiteral String Label
 
@@ -209,5 +215,5 @@ inc_ l = tellInstruction $ INC l
 dec_ :: Operand -> SRW s e ()
 dec_ l = tellInstruction $ DEC l
 
-call_ :: Label -> SRW s e ()
+call_ :: Operand -> SRW s e ()
 call_ n = tellInstruction $ CALL n

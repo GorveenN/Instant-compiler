@@ -16,8 +16,10 @@ import Control.Monad.Fail
   ( MonadFail,
     fail,
   )
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader
   ( ReaderT,
+    ask,
     asks,
     local,
     runReaderT,
@@ -33,11 +35,14 @@ import Control.Monad.Writer
   ( Writer,
     WriterT,
     execWriter,
+    execWriterT,
     runWriter,
     tell,
   )
 import Data.List (sortBy)
 import qualified Data.Map as Map
+import Debug.Trace
+import System.IO
 
 type CodeGen d = SRW Store Env d
 
@@ -54,6 +59,7 @@ data Env = Env
   { _vars :: VarMap,
     _stackH :: Integer
   }
+  deriving (Show)
 
 data Store = Store
   { _funs :: FunMap,
@@ -61,6 +67,7 @@ data Store = Store
     _stringMap :: StringMap,
     _classes :: ClassMap
   }
+  deriving (Show)
 
 $(makeLenses ''Env)
 $(makeLenses ''Store)
@@ -68,9 +75,9 @@ $(makeLenses ''Store)
 instance MonadFail Identity where
   fail = error "Fail"
 
-runCodeGen :: Program -> ([Instruction], [StringLiteral], [VTable])
+-- runCodeGen :: Program -> ([Instruction], [StringLiteral], [VTable])
 runCodeGen program =
-  execWriter $
+  execWriterT $
     runReaderT
       ( evalStateT
           (emmitProgram program)
@@ -125,12 +132,37 @@ movIfNescessary o1 o2 =
 getVar :: String -> CodeGen (Operand, Type)
 getVar n = asks ((Map.! n) . _vars)
 
+ensureInRegister :: Operand -> CodeGen Register
+ensureInRegister m@(Memory _ _) = do
+  mov_ m eax_
+  return EAX
+ensureInRegister (Register r) = return r
+
 -- result of Expr is packed in eax register or is a constant
 emmitExpr :: Expr -> CodeGen (Operand, Type)
-emmitExpr (ENewObject t) = undefined
 emmitExpr (ENewArray t e) = undefined
-emmitExpr (EField e i) = undefined
-emmitExpr (EMethodCall e i args) = undefined
+emmitExpr (ENewObject t@(TypeClass n)) = do
+  call_ $ Label (n ++ "__new")
+  return (eax_, t)
+emmitExpr (EField e i) = do
+  (op', t@(TypeClass tn)) <- emmitExpr e
+  -- a <- get
+  -- b <- ask
+  -- liftIO $ print a
+  -- liftIO $ print b
+  op <- ensureInRegister op'
+  (offset, ftype) <- gets ((Map.! i) . fst . (Map.! tn) . _classes)
+  return (Memory op $ Just offset, ftype)
+emmitExpr (EMethodCall e i args) = do
+  (op', t@(TypeClass tn)) <- emmitExpr e
+  (offset, ftype) <- gets ((Map.! i) . snd . (Map.! tn) . _classes)
+  op <- ensureInRegister op'
+  push_ $ Register op
+  mapM_ (emmitExpr >=> push_ . fst) (reverse args)
+  unless (offset == 0) $ add_ (Const offset) (Register op)
+  call_ $ Dereference op
+  add_ (Const (toInteger $ 4 + length args * 4)) esp_
+  return (eax_, ftype)
 emmitExpr (ELitInt i) = return (Const i, TypeInt)
 emmitExpr (EString s) = do
   l <- insertString s
@@ -138,7 +170,7 @@ emmitExpr (EString s) = do
 emmitExpr (EVar v) = getVar v
 emmitExpr (EApp n args) = do
   mapM_ (emmitExpr >=> push_ . fst) (reverse args)
-  call_ n
+  call_ $ Label n
   add_ (Const (toInteger $ length args * 4)) esp_
   t <- gets ((Map.! n) . _funs)
   return (eax_, t)
@@ -169,7 +201,7 @@ emmitExpr (EArithm e1 op e2) = case op of
       case t of
         TypeStr -> do
           push_ op1
-          call_ fConcatString
+          call_ $ Label fConcatString
           add_ (Const 8) esp_
           return (eax_, TypeStr)
         _ -> do
@@ -317,8 +349,8 @@ emmitProgram (Program defs) = do
   let classes = foldr toClass [] defs
   let f = compose $ map (\(FnDef t n _ _) -> Map.insert n t) functions
   modify (over funs f)
-  mapM_ emmitFnDef functions
   emmitClasses classes
+  mapM_ emmitFnDef functions
   where
     isFun TopFnDef {} = True
     isFun _ = False
@@ -337,7 +369,7 @@ emmitClassMethods = mapM_ emmitMethods
       emmitFnDef
         ( FnDef
             t
-            (clsn ++ "::" ++ funn)
+            (clsn ++ "__" ++ funn)
             (TypedId (TypeClass clsn) "self" : args)
             body
         )
@@ -346,6 +378,8 @@ emmitClasses :: [ClassDef] -> CodeGen ()
 emmitClasses s = do
   f <- compose <$> mapM (traverseClassTree classHierarchy Map.empty 0 []) s
   modify (over classes f)
+  -- a <- get
+  -- liftIO $ print a
   emmitClassMethods s
   where
     isBaseclass :: ClassDef -> Bool
@@ -374,7 +408,10 @@ traverseClassTree m imethods nummeth ifield cls = do
   -- gen vtable
   let newFields = ifield ++ fields
   let (newVTableMap, newNumMeth) = updateVTable methods imethods nummeth
-  emmitClassConstructor name newFields
+  emmitClassConstructor
+    (name ++ "__new")
+    (if null newVTableMap then Const 0 else Label $ name ++ "__VTable")
+    newFields
   unless (null newVTableMap) $ emmitVTable name newVTableMap
 
   let methodsMap = Map.map (\(a, b, c) -> (b, c)) newVTableMap
@@ -408,7 +445,7 @@ traverseClassTree m imethods nummeth ifield cls = do
 emmitVTable :: Id -> Map.Map Id (Id, Integer, Type) -> CodeGen ()
 emmitVTable cls m = do
   let methods =
-        map (\(m, (c, _, _)) -> c ++ "::" ++ m) $
+        map (\(m, (c, _, _)) -> c ++ "__" ++ m) $
           sortBy comparator $
             Map.assocs
               m
@@ -416,15 +453,15 @@ emmitVTable cls m = do
   where
     comparator (_, (_, _, n1)) (_, (_, _, n2)) = compare n1 n2
 
-emmitClassConstructor :: Id -> [TypedId] -> CodeGen ()
-emmitClassConstructor n s = do
-  label_ $ n ++ "::new"
+emmitClassConstructor :: Id -> Operand -> [TypedId] -> CodeGen ()
+emmitClassConstructor n v s = do
+  label_ n
   push_ ebx_
   push_ $ Const (toInteger $ 4 * length s)
-  call_ "__malloc"
+  call_ $ Label "__malloc"
   add_ (Const 4) esp_
   mov_ eax_ ebx_
-  mov_ (Label (n ++ "::VTable")) (Memory EBX (Just 0))
+  mov_ v (Memory EBX (Just 0))
   let adresses = map (Memory EBX . Just . (* 4)) [1 ..]
   zipWithM_ emmitTypedId adresses s
   mov_ ebx_ eax_
@@ -439,7 +476,7 @@ emmitClassConstructor n s = do
       l <- insertString ""
       mov_ (Label l) o
     emmitTypedId o (TypedId (TypeClass n) _) = do
-      call_ $ n ++ "::new"
+      call_ $ Label $ n ++ "__new"
       mov_ eax_ o
     emmitTypedId o (TypedId (TypeArray _) _) = undefined
 
@@ -488,13 +525,23 @@ makeLabel = do
   modify (over labelCounter (+ 1))
   return $ "__label__" ++ show a
 
-cumpile :: Program -> [String]
-cumpile program = ".data" : strings ++ textPrologue ++ instrs
+-- cumpile :: Program -> [String]
+-- cumpile program = ".data" : strings ++ vtable ++ textPrologue ++ instrs
+--   where
+--     (instrs', strings', vtable') = runCodeGen program
+--     strings = map show strings'
+--     instrs = map show instrs'
+--     vtable = map show vtable'
+--     textPrologue = [".text", ".globl main"]
+
+cumpile :: Program -> IO [String]
+cumpile program = do
+  (instrs', strings', vtable') <- runCodeGen program
+  let strings = map show strings'
+  let instrs = map show instrs'
+  let vtable = map show vtable'
+  return $ ".data" : strings ++ vtable ++ textPrologue ++ instrs
   where
-    (instrs', strings', vtable') = runCodeGen program
-    strings = map show strings'
-    instrs = map show instrs'
-    vtable = map show vtable'
     textPrologue = [".text", ".globl main"]
 
 fConcatString :: String

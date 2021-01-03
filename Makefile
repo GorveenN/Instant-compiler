@@ -1,5 +1,5 @@
 all: src/main/Main.hs src/latte/*
-	stack build
+	stack build 
 	stack --local-bin-path . install
 
 gram: src/gram/Latte.cf
