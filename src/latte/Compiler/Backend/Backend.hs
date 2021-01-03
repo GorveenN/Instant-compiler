@@ -189,17 +189,15 @@ emmitExpr (EField e i) = do
   (offset, ftype) <- gets ((Map.! i) . fst . (Map.! tn) . _classes)
   return (Memory op $ Just offset, ftype)
 emmitExpr (EMethodCall e i args) = do
-  liftIO $ print "Beg method call"
+  mapM_ (emmitExpr >=> push_ . fst) (reverse args)
   (op', t@(TypeClass tn)) <- emmitExpr e
   (offset, ftype) <- gets ((Map.! i) . snd . (Map.! tn) . _classes)
   op <- ensureInRegister op'
   push_ $ Register op
-  mapM_ (emmitExpr >=> push_ . fst) (reverse args)
+  mov_ (Memory op Nothing) (Register op) -- vtable address
   unless (offset == 0) $ add_ (Const offset) (Register op)
-  mov_ (Memory op Nothing) (Register op)
   call_ $ Dereference op
   add_ (Const (toInteger $ 4 + length args * 4)) esp_
-  liftIO $ print "end method call"
   return (eax_, ftype)
 emmitExpr (ELitInt i) = return (Const i, TypeInt)
 emmitExpr (EString s) = do
@@ -481,8 +479,8 @@ traverseClassTree m imethods nummeth ifield cls = do
       Map.Map Id (Id, Integer, Type) ->
       Integer ->
       (Map.Map Id (Id, Integer, Type), Integer)
-    updateVTable fndefs vtable maxaddr = foldr updater (vtable, maxaddr) fndefs
-    updater (FnDef t n _ _) (m, i) = case Map.lookup n m of
+    updateVTable fndefs vtable maxaddr = foldl updater (vtable, maxaddr) fndefs
+    updater (m, i) (FnDef t n _ _) = case Map.lookup n m of
       Just (_, offset, t) -> (Map.insert n (name, offset, t) m, i)
       Nothing -> (Map.insert n (name, i, t) m, i + 4)
 
