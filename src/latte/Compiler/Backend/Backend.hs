@@ -57,7 +57,8 @@ type FunMap = Map.Map Id Type
 
 data Env = Env
   { _vars :: VarMap,
-    _stackH :: Integer
+    _stackH :: Integer,
+    _inclass :: Maybe Id
   }
   deriving (Show)
 
@@ -89,7 +90,7 @@ runCodeGen program =
               }
           )
       )
-      (Env {_vars = Map.empty, _stackH = 0})
+      (Env {_vars = Map.empty, _stackH = 0, _inclass = Nothing})
   where
     builtInFuns =
       [ ("readString", TypeStr),
@@ -146,10 +147,10 @@ emmitExpr (ENewObject t@(TypeClass n)) = do
   return (eax_, t)
 emmitExpr (EField e i) = do
   (op', t@(TypeClass tn)) <- emmitExpr e
-  -- a <- get
-  -- b <- ask
-  -- liftIO $ print a
-  -- liftIO $ print b
+  a <- get
+  b <- ask
+  liftIO $ print a
+  liftIO $ print b
   op <- ensureInRegister op'
   (offset, ftype) <- gets ((Map.! i) . fst . (Map.! tn) . _classes)
   return (Memory op $ Just offset, ftype)
@@ -160,6 +161,7 @@ emmitExpr (EMethodCall e i args) = do
   push_ $ Register op
   mapM_ (emmitExpr >=> push_ . fst) (reverse args)
   unless (offset == 0) $ add_ (Const offset) (Register op)
+  mov_ (Memory op Nothing) (Register op)
   call_ $ Dereference op
   add_ (Const (toInteger $ 4 + length args * 4)) esp_
   return (eax_, ftype)
@@ -376,17 +378,20 @@ emmitClassMethods = mapM_ emmitMethods
 
 emmitClasses :: [ClassDef] -> CodeGen ()
 emmitClasses s = do
-  f <- compose <$> mapM (traverseClassTree classHierarchy Map.empty 0 []) s
+  liftIO $ print classHierarchy
+
+  f <- compose <$> mapM (traverseClassTree classHierarchy Map.empty 0 []) baseclasses
   modify (over classes f)
-  -- a <- get
-  -- liftIO $ print a
+  a <- get
+  liftIO $ print a
   emmitClassMethods s
   where
     isBaseclass :: ClassDef -> Bool
     isBaseclass Class {} = True
     isBaseclass _ = False
     childClass (Class n _) = Map.insertWith (++) n []
-    childClass c@(ClassInh _ i _) = Map.insertWith (++) i [c]
+    childClass c@(ClassInh b i _) =
+      Map.insertWith (++) i [c] . Map.insertWith (++) b []
     name (Class n _) = n
     name (ClassInh n _ _) = n
     comp c1 c2 = compare (name c1) (name c2)
@@ -457,7 +462,7 @@ emmitClassConstructor :: Id -> Operand -> [TypedId] -> CodeGen ()
 emmitClassConstructor n v s = do
   label_ n
   push_ ebx_
-  push_ $ Const (toInteger $ 4 * length s)
+  push_ $ Const (4 + toInteger (4 * length s))
   call_ $ Label "__malloc"
   add_ (Const 4) esp_
   mov_ eax_ ebx_
