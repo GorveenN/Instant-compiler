@@ -41,6 +41,7 @@ import Control.Monad.Writer
   )
 import Data.List (sortBy)
 import qualified Data.Map as Map
+import Data.Maybe
 import Debug.Trace
 import System.IO
 
@@ -131,7 +132,40 @@ movIfNescessary o1 o2 =
       return o1
 
 getVar :: String -> CodeGen (Operand, Type)
-getVar n = asks ((Map.! n) . _vars)
+getVar n = do
+  a <- asks (Map.lookup n . _vars)
+  case a of
+    Just a -> return a
+    Nothing -> do
+      -- self is stored as first argument of method call
+      -- so it must be under 8(%ebp)
+      cls <- asks (fromJust . _inclass)
+      (offset, t) <- gets ((Map.! n) . fst . (Map.! cls) . _classes)
+      mov_ (Memory EBP (Just 8)) eax_
+      return (Memory EAX (Just offset), t)
+
+-- overwrites eax
+getFun :: String -> CodeGen (Operand, Type)
+getFun n = do
+  cls <- asks _inclass
+  case cls of
+    Just cls -> do
+      method <- gets (Map.lookup n . snd . (Map.! cls) . _classes)
+      case method of
+        -- self is stored as first argument of method call
+        -- so it must be under 8(%ebp)
+        Just (offset, t) -> do
+          mov_ (Memory EBP (Just 8)) eax_
+          mov_ (Memory EAX Nothing) eax_
+          mov_ (Memory EAX (Just offset)) eax_
+          return (Dereference EAX, t)
+        Nothing -> simpleFun
+    Nothing -> simpleFun
+  where
+    simpleFun :: CodeGen (Operand, Type)
+    simpleFun = do
+      t <- gets ((Map.! n) . _funs)
+      return (Label n, t)
 
 ensureInRegister :: Operand -> CodeGen Register
 ensureInRegister m@(Memory _ _) = do
@@ -155,6 +189,7 @@ emmitExpr (EField e i) = do
   (offset, ftype) <- gets ((Map.! i) . fst . (Map.! tn) . _classes)
   return (Memory op $ Just offset, ftype)
 emmitExpr (EMethodCall e i args) = do
+  liftIO $ print "Beg method call"
   (op', t@(TypeClass tn)) <- emmitExpr e
   (offset, ftype) <- gets ((Map.! i) . snd . (Map.! tn) . _classes)
   op <- ensureInRegister op'
@@ -164,6 +199,7 @@ emmitExpr (EMethodCall e i args) = do
   mov_ (Memory op Nothing) (Register op)
   call_ $ Dereference op
   add_ (Const (toInteger $ 4 + length args * 4)) esp_
+  liftIO $ print "end method call"
   return (eax_, ftype)
 emmitExpr (ELitInt i) = return (Const i, TypeInt)
 emmitExpr (EString s) = do
@@ -171,10 +207,13 @@ emmitExpr (EString s) = do
   return (Label l, TypeStr)
 emmitExpr (EVar v) = getVar v
 emmitExpr (EApp n args) = do
-  mapM_ (emmitExpr >=> push_ . fst) (reverse args)
-  call_ $ Label n
+  (op, t) <- getFun n
+  let args' = case op of
+        (Label _) -> args
+        _ -> EVar "self" : args
+  mapM_ (emmitExpr >=> push_ . fst) (reverse args')
+  call_ op
   add_ (Const (toInteger $ length args * 4)) esp_
-  t <- gets ((Map.! n) . _funs)
   return (eax_, t)
 emmitExpr (Neg e) = do
   (op, t) <- emmitExpr e >>= immediateToOperandType eax_
@@ -368,18 +407,18 @@ emmitClassMethods = mapM_ emmitMethods
     emmitMethods cls = mapM_ (emmitMethod (getClassname cls)) (getMethods cls)
     emmitMethod :: Id -> FnDef -> CodeGen ()
     emmitMethod clsn (FnDef t funn args body) = do
-      emmitFnDef
-        ( FnDef
-            t
-            (clsn ++ "__" ++ funn)
-            (TypedId (TypeClass clsn) "self" : args)
-            body
-        )
+      local (over inclass $ const (Just clsn)) $
+        emmitFnDef
+          ( FnDef
+              t
+              (clsn ++ "__" ++ funn)
+              (TypedId (TypeClass clsn) "self" : args)
+              body
+          )
 
 emmitClasses :: [ClassDef] -> CodeGen ()
 emmitClasses s = do
   liftIO $ print classHierarchy
-
   f <- compose <$> mapM (traverseClassTree classHierarchy Map.empty 0 []) baseclasses
   modify (over classes f)
   a <- get
