@@ -24,6 +24,18 @@ data ClassDef
   | ClassInh Id Id ClassBlock
   deriving (Eq, Ord, Show, Read)
 
+getFields :: ClassDef -> [TypedId]
+getFields (Class _ (ClassBlock f _)) = f
+getFields (ClassInh _ _ (ClassBlock f _)) = f
+
+getMethods :: ClassDef -> [FnDef]
+getMethods (Class _ (ClassBlock _ m)) = m
+getMethods (ClassInh _ _ (ClassBlock _ m)) = m
+
+getClassname :: ClassDef -> Id
+getClassname (Class n _) = n
+getClassname (ClassInh n _ _) = n
+
 data Stmt
   = Block [Stmt]
   | Decl Type Id Expr

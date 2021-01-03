@@ -15,6 +15,7 @@ import Control.Monad.Writer
     runWriter,
     tell,
   )
+import Data.List (intercalate)
 import Data.Map
 
 data Register
@@ -122,8 +123,14 @@ instance Show Instruction where
   show (DEC l) = "decl " ++ show l
   show RET = "ret"
 
+data VTable = VTable Label [Label]
+
+instance Show VTable where
+  show (VTable classname methods) =
+    classname ++ "::VTable: .int " ++ intercalate ", " methods
+
 type SRW s e d =
-  StateT s (ReaderT e (Writer ([Instruction], [StringLiteral]))) d
+  StateT s (ReaderT e (Writer ([Instruction], [StringLiteral], [VTable]))) d
 
 data StringLiteral = StringLiteral String Label
 
@@ -131,10 +138,13 @@ instance Show StringLiteral where
   show (StringLiteral s l) = l ++ ":\n" ++ ".string \"" ++ s ++ "\""
 
 tellInstruction :: Instruction -> SRW s e ()
-tellInstruction xs = tell ([xs], mempty)
+tellInstruction xs = tell ([xs], mempty, mempty)
 
 tellStringLiteral :: StringLiteral -> SRW s e ()
-tellStringLiteral xs = tell (mempty, [xs])
+tellStringLiteral xs = tell (mempty, [xs], mempty)
+
+tellVTable :: VTable -> SRW s e ()
+tellVTable xs = tell (mempty, mempty, [xs])
 
 add_ :: Operand -> Operand -> SRW s e ()
 add_ l r = tellInstruction $ ADD l r

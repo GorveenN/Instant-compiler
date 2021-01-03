@@ -41,16 +41,25 @@ import qualified Data.Map as Map
 
 type CodeGen d = SRW Store Env d
 
+type ClassMap =
+  Map.Map Id (Map.Map Id (Offset, Type), Map.Map Id (Offset, Type))
+
+type StringMap = Map.Map Id Label
+
+type VarMap = Map.Map Id (Operand, Type)
+
+type FunMap = Map.Map Id Type
+
 data Env = Env
-  { _vars :: Map.Map Id (Operand, Type),
+  { _vars :: VarMap,
     _stackH :: Integer
   }
 
 data Store = Store
-  { _funs :: Map.Map Id Type,
+  { _funs :: FunMap,
     _labelCounter :: Integer,
-    _stringMap :: Map.Map Id Label,
-    _classes :: Map.Map Id (Map.Map Id Offset, Map.Map Id Offset)
+    _stringMap :: StringMap,
+    _classes :: ClassMap
   }
 
 $(makeLenses ''Env)
@@ -59,7 +68,7 @@ $(makeLenses ''Store)
 instance MonadFail Identity where
   fail = error "Fail"
 
-runCodeGen :: Program -> ([Instruction], [StringLiteral])
+runCodeGen :: Program -> ([Instruction], [StringLiteral], [VTable])
 runCodeGen program =
   execWriter $
     runReaderT
@@ -304,16 +313,40 @@ compose = foldr (.) id
 
 emmitProgram :: Program -> CodeGen ()
 emmitProgram (Program defs) = do
-  let fd = filter isFun defs
-  let f = compose $ map (\(TopFnDef (FnDef t n _ _)) -> Map.insert n t) fd
+  let functions = foldr toFun [] defs
+  let classes = foldr toClass [] defs
+  let f = compose $ map (\(FnDef t n _ _) -> Map.insert n t) functions
   modify (over funs f)
-  mapM_ emmitTopDef defs
+  mapM_ emmitFnDef functions
+  emmitClasses classes
   where
     isFun TopFnDef {} = True
     isFun _ = False
+    toFun (TopFnDef f) rest = f : rest
+    toFun _ rest = rest
+    toClass (TopClassDef c) rest = c : rest
+    toClass _ rest = rest
 
-buildClassHierchy :: [ClassDef] -> Map.Map ClassDef [ClassDef]
-buildClassHierchy s = classHierarchy
+emmitClassMethods :: [ClassDef] -> CodeGen ()
+emmitClassMethods = mapM_ emmitMethods
+  where
+    emmitMethods :: ClassDef -> CodeGen ()
+    emmitMethods cls = mapM_ (emmitMethod (getClassname cls)) (getMethods cls)
+    emmitMethod :: Id -> FnDef -> CodeGen ()
+    emmitMethod clsn (FnDef t funn args body) = do
+      emmitFnDef
+        ( FnDef
+            t
+            (clsn ++ "::" ++ funn)
+            (TypedId (TypeClass clsn) "self" : args)
+            body
+        )
+
+emmitClasses :: [ClassDef] -> CodeGen ()
+emmitClasses s = do
+  f <- compose <$> mapM (traverseClassTree classHierarchy Map.empty 0 []) s
+  modify (over classes f)
+  emmitClassMethods s
   where
     isBaseclass :: ClassDef -> Bool
     isBaseclass Class {} = True
@@ -332,49 +365,67 @@ buildClassHierchy s = classHierarchy
 
 traverseClassTree ::
   Map.Map ClassDef [ClassDef] ->
-  ClassDef ->
-  Map.Map Id (Id, Integer) ->
+  Map.Map Id (Id, Integer, Type) ->
   Integer ->
   [TypedId] ->
-  CodeGen ()
-traverseClassTree m cls imethods nummeth ifield = do
+  ClassDef ->
+  CodeGen (ClassMap -> ClassMap)
+traverseClassTree m imethods nummeth ifield cls = do
   -- gen vtable
   let newFields = ifield ++ fields
-  let (newVTable, newNumMeth) = updateVTable methods imethods nummeth
-  emmitClassInit name newFields
-  -- should return
-  return ()
-  where
-    getFields (Class _ (ClassBlock f _)) = f
-    getFields (ClassInh _ _ (ClassBlock f _)) = f
-    getMethods (Class _ (ClassBlock _ m)) = m
-    getMethods (ClassInh _ _ (ClassBlock _ m)) = m
-    getClassname (Class n _) = n
-    getClassname (ClassInh n _ _) = n
+  let (newVTableMap, newNumMeth) = updateVTable methods imethods nummeth
+  emmitClassConstructor name newFields
+  unless (null newVTableMap) $ emmitVTable name newVTableMap
 
+  let methodsMap = Map.map (\(a, b, c) -> (b, c)) newVTableMap
+  let fieldsMap =
+        Map.fromList $
+          zip
+            (map (\(TypedId t n) -> n) newFields)
+            (zip ((* 4) <$> [1 ..]) (map (\(TypedId t n) -> t) newFields))
+  let classMap = Map.insert name (fieldsMap, methodsMap)
+  childrenMap <-
+    mapM
+      (traverseClassTree m newVTableMap newNumMeth newFields)
+      children
+  return (compose $ classMap : childrenMap)
+  where
     name = getClassname cls
     fields = getFields cls
     methods = getMethods cls
     children = m Map.! cls
 
-    updateVTable :: [FnDef] -> Map.Map Id (Id, Integer) -> Integer -> (Map.Map Id (Id, Integer), Integer)
+    updateVTable ::
+      [FnDef] ->
+      Map.Map Id (Id, Integer, Type) ->
+      Integer ->
+      (Map.Map Id (Id, Integer, Type), Integer)
     updateVTable fndefs vtable maxaddr = foldr updater (vtable, maxaddr) fndefs
-    updater (FnDef _ n _ _) (m, i) = case Map.lookup n m of
-      Just (_, offset) -> (Map.insert n (name, offset) m, i)
-      Nothing -> (Map.insert n (name, i) m, i + 4)
+    updater (FnDef t n _ _) (m, i) = case Map.lookup n m of
+      Just (_, offset, t) -> (Map.insert n (name, offset, t) m, i)
+      Nothing -> (Map.insert n (name, i, t) m, i + 4)
 
-emmitVTable :: Map.Map Id (Id, Integer) -> CodeGen ()
-emmitVTable _ = return ()
+emmitVTable :: Id -> Map.Map Id (Id, Integer, Type) -> CodeGen ()
+emmitVTable cls m = do
+  let methods =
+        map (\(m, (c, _, _)) -> c ++ "::" ++ m) $
+          sortBy comparator $
+            Map.assocs
+              m
+  tellVTable $ VTable cls methods
+  where
+    comparator (_, (_, _, n1)) (_, (_, _, n2)) = compare n1 n2
 
-emmitClassInit :: Id -> [TypedId] -> CodeGen ()
-emmitClassInit n s = do
+emmitClassConstructor :: Id -> [TypedId] -> CodeGen ()
+emmitClassConstructor n s = do
   label_ $ n ++ "::new"
   push_ ebx_
   push_ $ Const (toInteger $ 4 * length s)
   call_ "__malloc"
   add_ (Const 4) esp_
   mov_ eax_ ebx_
-  let adresses = map (Memory EBX . Just) [0 ..]
+  mov_ (Label (n ++ "::VTable")) (Memory EBX (Just 0))
+  let adresses = map (Memory EBX . Just . (* 4)) [1 ..]
   zipWithM_ emmitTypedId adresses s
   mov_ ebx_ eax_
   pop_ ebx_
@@ -394,7 +445,10 @@ emmitClassInit n s = do
 
 emmitTopDef :: TopDef -> CodeGen ()
 emmitTopDef (TopClassDef cls) = undefined
-emmitTopDef (TopFnDef (FnDef type_ name args stmt)) = do
+emmitTopDef (TopFnDef fndef) = emmitFnDef fndef
+
+emmitFnDef :: FnDef -> CodeGen ()
+emmitFnDef (FnDef type_ name args stmt) = do
   let pos = (* 4) <$> [2 ..]
   let f = compose $ zipWith argpos args pos
   label_ name
@@ -437,9 +491,10 @@ makeLabel = do
 cumpile :: Program -> [String]
 cumpile program = ".data" : strings ++ textPrologue ++ instrs
   where
-    (instrs', strings') = runCodeGen program
+    (instrs', strings', vtable') = runCodeGen program
     strings = map show strings'
     instrs = map show instrs'
+    vtable = map show vtable'
     textPrologue = [".text", ".globl main"]
 
 fConcatString :: String

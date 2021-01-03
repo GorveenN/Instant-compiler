@@ -18,8 +18,7 @@ function run_tests_in() {
     for file in $1; do
         if [[ "$file" == *".lat" ]]; then
             basename="$(echo $file | cut -f1 -d".")"
-            echo "$file"
-            $program_path $file
+            $program_path $file 2>/dev/null
             if [ -f "$basename.input" ]; then
                 ./$basename <"$basename.input" | diff "$basename.output" -
             else
@@ -27,10 +26,11 @@ function run_tests_in() {
             fi
 
             if [ "$?" -eq $2 ]; then
-                echo -e "${GREEN}OK${NC}"
+                echo -ne "${GREEN}OK${NC}\t"
             else
-                echo -e "${RED}TEST FAILED FOR ${file}${NC}"
+                echo -ne "${RED}FAIL${file}${NC}\t"
             fi
+            echo "$file"
         fi
     done
 }
