@@ -77,9 +77,9 @@ $(makeLenses ''Store)
 instance MonadFail Identity where
   fail = error "Fail"
 
--- runCodeGen :: Program -> ([Instruction], [StringLiteral], [VTable])
+runCodeGen :: Program -> ([Instruction], [StringLiteral], [VTable])
 runCodeGen program =
-  execWriterT $
+  execWriter $
     runReaderT
       ( evalStateT
           (emmitProgram program)
@@ -376,6 +376,7 @@ emmitStmt (While e s) = do
 emmitStmt (For t n e s) = undefined
 emmitStmt (SExp e) = void $ emmitExpr e
 
+compose :: [b -> b] -> b -> b
 compose = foldr (.) id
 
 emmitProgram :: Program -> CodeGen ()
@@ -412,13 +413,8 @@ emmitClassMethods = mapM_ emmitMethods
 
 emmitClasses :: [ClassDef] -> CodeGen ()
 emmitClasses s = do
-  -- liftIO $ print classHierarchy
   f <- compose <$> mapM (traverseClassTree classHierarchy Map.empty 0 []) baseclasses
   modify (over classes f)
-  state <- get
-  env <- ask
-  -- liftIO $ print state
-  -- liftIO $ print env
   emmitClassMethods s
   where
     isBaseclass :: ClassDef -> Bool
@@ -445,7 +441,6 @@ traverseClassTree ::
   ClassDef ->
   CodeGen (ClassMap -> ClassMap)
 traverseClassTree m imethods nummeth ifield cls = do
-  -- gen vtable
   let newFields = ifield ++ fields
   let (newVTableMap, newNumMeth) = updateVTable methods imethods nummeth
   emmitClassConstructor
@@ -563,23 +558,13 @@ makeLabel = do
   modify (over labelCounter (+ 1))
   return $ "__label__" ++ show a
 
--- cumpile :: Program -> [String]
--- cumpile program = ".data" : strings ++ vtable ++ textPrologue ++ instrs
---   where
---     (instrs', strings', vtable') = runCodeGen program
---     strings = map show strings'
---     instrs = map show instrs'
---     vtable = map show vtable'
---     textPrologue = [".text", ".globl main"]
-
-cumpile :: Program -> IO [String]
-cumpile program = do
-  (instrs', strings', vtable') <- runCodeGen program
-  let strings = map show strings'
-  let instrs = map show instrs'
-  let vtable = map show vtable'
-  return $ ".data" : strings ++ vtable ++ textPrologue ++ instrs
+cumpile :: Program -> [String]
+cumpile program = ".data" : strings ++ vtable ++ textPrologue ++ instrs
   where
+    (instrs', strings', vtable') = runCodeGen program
+    strings = map show strings'
+    instrs = map show instrs'
+    vtable = map show vtable'
     textPrologue = [".text", ".globl main"]
 
 fConcatString :: String

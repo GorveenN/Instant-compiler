@@ -43,8 +43,7 @@ run a = do
           let doto = workdir ++ base ++ ".o"
           let libo = workdir ++ "lib.o"
           callCommand $ "mkdir -p " ++ workdir
-          b <- cumpile $ transProgram tree
-          writeFile dots $ unlines b
+          writeFile dots $ unlines $ cumpile $ transProgram tree
           callCommand $ "gcc -g -m32 -o " ++ libo ++ " -c " ++ library a
           callCommand $ "gcc -g -m32 -o " ++ doto ++ " -c " ++ dots
           callCommand $ "gcc -g -m32 -o " ++ outname ++ " " ++ doto ++ " " ++ libo

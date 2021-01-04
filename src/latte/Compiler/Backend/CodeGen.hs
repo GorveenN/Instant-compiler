@@ -133,10 +133,7 @@ instance Show VTable where
     classname ++ "__VTable: .int " ++ intercalate ", " methods
 
 type SRW s e d =
-  StateT
-    s
-    (ReaderT e (WriterT ([Instruction], [StringLiteral], [VTable]) IO))
-    d
+  StateT s (ReaderT e (Writer ([Instruction], [StringLiteral], [VTable]))) d
 
 data StringLiteral = StringLiteral String Label
 
