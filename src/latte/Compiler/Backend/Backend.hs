@@ -167,28 +167,68 @@ getFun n = do
       t <- gets ((Map.! n) . _funs)
       return (Label n, t)
 
-ensureInRegister :: Operand -> CodeGen Register
-ensureInRegister m@(Memory _ _) = do
+ensureInRegister :: Register -> Operand -> CodeGen Register
+ensureInRegister r m@(Memory _ _) = do
+  mov_ m $ Register r
+  return r
+ensureInRegister r1 (Register r2) = do
+  unless (r1 == r2) $ mov_ (Register r2) (Register r1)
+  return r1
+
+ensureInAnyRegister :: Operand -> CodeGen Register
+ensureInAnyRegister (Register r2) = return r2
+ensureInAnyRegister m = do
   mov_ m eax_
   return EAX
-ensureInRegister (Register r) = return r
 
 -- result of Expr is packed in eax register or is a constant
 emmitExpr :: Expr -> CodeGen (Operand, Type)
-emmitExpr (ENewArray t e) = undefined
+emmitExpr (EAccess a i) = do
+  emmitExpr (EArithm i Times (ELitInt 4)) >>= push_ . fst
+  (aop', TypeArray t) <- emmitExpr a
+  aop <- ensureInRegister EAX aop'
+  add_ (Memory ESP Nothing) $ Register aop
+  add_ (Const 4) esp_
+  return (Memory aop $ Just 4, t)
+emmitExpr (ENewArray t e) = do
+  op' <- emmitExpr e >>= ensureInAnyRegister . fst
+  let op = Register op'
+  push_ op -- number of elements
+  imul_ (Const 4) op
+  add_ (Const 4) op
+  push_ op -- number of bytes
+  call_ $ Label "__malloc" -- address is stored in eax
+  case t of
+    TypeStr -> do
+      l <- insertString ""
+      push_ $ Label l
+    _ -> push_ $ Const 0
+  push_ eax_
+  call_ $ Label "memset"
+  -- len of array + 4
+  mov_ (Memory ESP $ Just 12) eax_
+  mov_ (Memory ESP Nothing) edx_
+  mov_ eax_ (Memory EDX Nothing)
+  mov_ (Memory ESP Nothing) eax_
+  add_ (Const 16) esp_
+  return (eax_, TypeArray t)
 emmitExpr (ENewObject t@(TypeClass n)) = do
   call_ $ Label (n ++ "__new")
   return (eax_, t)
 emmitExpr (EField e i) = do
-  (op', t@(TypeClass tn)) <- emmitExpr e
-  op <- ensureInRegister op'
-  (offset, ftype) <- gets ((Map.! i) . fst . (Map.! tn) . _classes)
-  return (Memory op $ Just offset, ftype)
+  (op', t) <- emmitExpr e
+  op <- ensureInAnyRegister op'
+  case t of
+    TypeClass tn -> do
+      op <- ensureInAnyRegister op'
+      (offset, ftype) <- gets ((Map.! i) . fst . (Map.! tn) . _classes)
+      return (Memory op $ Just offset, ftype)
+    TypeArray _ -> return (Memory op Nothing, TypeInt)
 emmitExpr (EMethodCall e i args) = do
   mapM_ (emmitExpr >=> push_ . fst) (reverse args)
   (op', t@(TypeClass tn)) <- emmitExpr e
   (offset, ftype) <- gets ((Map.! i) . snd . (Map.! tn) . _classes)
-  op <- ensureInRegister op'
+  op <- ensureInAnyRegister op'
   push_ $ Register op
   mov_ (Memory op Nothing) (Register op) -- vtable address
   unless (offset == 0) $ add_ (Const offset) (Register op)
@@ -280,7 +320,7 @@ emmitLogic e ltrue lfalse = emmitLogic (ELogic e EQU (ELitInt 1)) ltrue lfalse
 cmpjmp instr1 instr2 label1 label2 e1 e2 = do
   push_ . fst =<< emmitExpr e2
   op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
-  let op2 = ecx_
+  let op2 = edx_
   pop_ op2
   cmp_ op2 op1
   jmpIfJust instr1 label1
@@ -340,10 +380,13 @@ emmitStmt (Block ss) = do
     _isRetBlock _ = False
 -- Decl is handled by Block
 emmitStmt (Ass e1 e2) = do
-  -- consts does not need to be pushed and then poped
-  -- just mov them
-  emmitExpr e2 >>= push_ . fst
-  emmitExpr e1 >>= pop_ . fst
+  e2' <- fst <$> emmitExpr e2
+  case e2' of
+    c@(Const _) -> do
+      emmitExpr e1 >>= mov_ c . fst
+    _ -> do
+      push_ e2'
+      emmitExpr e1 >>= pop_ . fst
 emmitStmt (Incr e) = emmitExpr e >>= inc_ . fst
 emmitStmt (Decr e) = emmitExpr e >>= dec_ . fst
 emmitStmt (Ret e) = do
@@ -373,8 +416,46 @@ emmitStmt (While e s) = do
   emmitStmt s
   jmp_ condlabel
   label_ flabel
-emmitStmt (For t n e s) = undefined
+emmitStmt (For t n e s) = do
+  a <- longestId
+  prevIds <- asks (Map.keys . _vars)
+  let allIds = n : prevIds ++ getDeclIds s
+  let prefix = concat $ replicate (maximum $ map length allIds) "_"
+  let counterLabel = prefix ++ "counter"
+  let arrayLabel = prefix ++ "array"
+  let lenLabel = prefix ++ "len"
+  let initVal = case t of
+        TypeStr -> EString ""
+        _ -> ELitInt 0
+  let while =
+        Block
+          [ Decl t n initVal,
+            Decl TypeInt counterLabel (ELitInt 0),
+            Decl (TypeArray t) arrayLabel e,
+            Decl TypeInt lenLabel (EField (EVar arrayLabel) "length"),
+            While
+              (ELogic (EVar counterLabel) LTH (EVar lenLabel))
+              ( Block
+                  [ Ass (EVar n) (EAccess (EVar arrayLabel) (EVar counterLabel)),
+                    Ass
+                      (EVar counterLabel)
+                      (EArithm (EVar counterLabel) Plus (ELitInt 1)),
+                    s
+                  ]
+              )
+          ]
+  emmitStmt while
 emmitStmt (SExp e) = void $ emmitExpr e
+
+longestId :: CodeGen Id
+longestId = do
+  longest <- asks (maximum . map length . Map.keys . _vars)
+  return (concat $ replicate longest "_")
+
+getDeclIds :: Stmt -> [Id]
+getDeclIds (Block stmts) = concatMap getDeclIds stmts
+getDeclIds (Decl _ n _) = [n]
+getDeclIds _ = []
 
 compose :: [b -> b] -> b -> b
 compose = foldr (.) id
@@ -413,7 +494,9 @@ emmitClassMethods = mapM_ emmitMethods
 
 emmitClasses :: [ClassDef] -> CodeGen ()
 emmitClasses s = do
-  f <- compose <$> mapM (traverseClassTree classHierarchy Map.empty 0 []) baseclasses
+  f <-
+    compose
+      <$> mapM (traverseClassTree classHierarchy Map.empty 0 []) baseclasses
   modify (over classes f)
   emmitClassMethods s
   where
@@ -505,13 +588,17 @@ emmitClassConstructor n v s = do
   return ()
   where
     emmitTypedId :: Operand -> TypedId -> CodeGen ()
-    emmitTypedId o (TypedId TypeInt _) = mov_ (Const 0) o
-    emmitTypedId o (TypedId TypeBool _) = mov_ (Const 0) o
+    -- emmitTypedId o (TypedId TypeInt _) = mov_ (Const 0) o
+    -- emmitTypedId o (TypedId TypeBool _) = mov_ (Const 0) o
+    -- emmitTypedId o (TypedId TypeStr _) = do
+    --   l <- insertString ""
+    --   mov_ (Label l) o
+    -- emmitTypedId o (TypedId (TypeClass n) _) = mov_ (Const 0) o
+    -- emmitTypedId o (TypedId (TypeArray _) _) = mov_ (Const 0) o
     emmitTypedId o (TypedId TypeStr _) = do
       l <- insertString ""
       mov_ (Label l) o
-    emmitTypedId o (TypedId (TypeClass n) _) = mov_ (Const 0) o
-    emmitTypedId o (TypedId (TypeArray _) _) = undefined
+    emmitTypedId o _ = mov_ (Const 0) o
 
 emmitTopDef :: TopDef -> CodeGen ()
 emmitTopDef (TopClassDef cls) = undefined

@@ -8,6 +8,7 @@ extension_tests_dir="lattests/extensions/*/*"
 objects_test_dir="lattests/extensions/objects1/*"
 objects_test_dir2="lattests/extensions/objects2/*"
 struct_test_dir="lattests/extensions/struct/*"
+arrays_test_dir="lattests/extensions/arrays1/*"
 program_path="./latc"
 
 more_good_tests="my_tests/basic/*.lat"
@@ -42,6 +43,7 @@ run_tests_in "$good_tests_dir" 0
 run_tests_in "$objects_test_dir" 0
 run_tests_in "$objects_test_dir2" 0
 run_tests_in "$struct_test_dir" 0
+run_tests_in "$arrays_test_dir" 0
 # run_tests_in "$bad_tests_dir" 1
 # run_tests_in "$extension_tests_dir" 0
 
