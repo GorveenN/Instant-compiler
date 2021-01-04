@@ -181,10 +181,6 @@ emmitExpr (ENewObject t@(TypeClass n)) = do
   return (eax_, t)
 emmitExpr (EField e i) = do
   (op', t@(TypeClass tn)) <- emmitExpr e
-  a <- get
-  b <- ask
-  liftIO $ print a
-  liftIO $ print b
   op <- ensureInRegister op'
   (offset, ftype) <- gets ((Map.! i) . fst . (Map.! tn) . _classes)
   return (Memory op $ Just offset, ftype)
@@ -304,8 +300,8 @@ emmitBoolEpilogue tlabel flabel endlabel = do
   label_ endlabel
   return eax_
 
-addVar :: String -> Operand -> Type -> CodeGen (Env -> Env)
-addVar n o t = do
+addVar :: String -> Type -> Operand -> CodeGen (Env -> Env)
+addVar n t o = do
   push_ o
   addr <- asks _stackH
   return $
@@ -322,7 +318,7 @@ emmitStmt (Block ss) = do
   where
     emmitStmtList :: [Stmt] -> CodeGen ()
     emmitStmtList ((Decl t n e) : ss) = do
-      f <- emmitExpr e >>= uncurry (addVar n)
+      f <- emmitExpr e >>= (addVar n t . fst)
       local f (emmitStmtList ss)
     emmitStmtList (s : ss) = do
       emmitStmt s
@@ -416,11 +412,13 @@ emmitClassMethods = mapM_ emmitMethods
 
 emmitClasses :: [ClassDef] -> CodeGen ()
 emmitClasses s = do
-  liftIO $ print classHierarchy
+  -- liftIO $ print classHierarchy
   f <- compose <$> mapM (traverseClassTree classHierarchy Map.empty 0 []) baseclasses
   modify (over classes f)
-  a <- get
-  liftIO $ print a
+  state <- get
+  env <- ask
+  -- liftIO $ print state
+  -- liftIO $ print env
   emmitClassMethods s
   where
     isBaseclass :: ClassDef -> Bool
@@ -493,7 +491,7 @@ emmitVTable cls m = do
               m
   tellVTable $ VTable cls methods
   where
-    comparator (_, (_, _, n1)) (_, (_, _, n2)) = compare n1 n2
+    comparator (_, (_, n1, _)) (_, (_, n2, _)) = compare n1 n2
 
 emmitClassConstructor :: Id -> Operand -> [TypedId] -> CodeGen ()
 emmitClassConstructor n v s = do
@@ -517,9 +515,7 @@ emmitClassConstructor n v s = do
     emmitTypedId o (TypedId TypeStr _) = do
       l <- insertString ""
       mov_ (Label l) o
-    emmitTypedId o (TypedId (TypeClass n) _) = do
-      call_ $ Label $ n ++ "__new"
-      mov_ eax_ o
+    emmitTypedId o (TypedId (TypeClass n) _) = mov_ (Const 0) o
     emmitTypedId o (TypedId (TypeArray _) _) = undefined
 
 emmitTopDef :: TopDef -> CodeGen ()

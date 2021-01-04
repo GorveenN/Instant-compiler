@@ -5,6 +5,9 @@ shopt -s extglob
 good_tests_dir="lattests/good/*"
 bad_tests_dir="lattests/bad/*"
 extension_tests_dir="lattests/extensions/*/*"
+objects_test_dir="lattests/extensions/objects1/*"
+objects_test_dir2="lattests/extensions/objects2/*"
+struct_test_dir="lattests/extensions/struct/*"
 program_path="./latc"
 
 more_good_tests="my_tests/basic/*.lat"
@@ -28,7 +31,7 @@ function run_tests_in() {
             if [ "$?" -eq $2 ]; then
                 echo -ne "${GREEN}OK${NC}\t"
             else
-                echo -ne "${RED}FAIL${file}${NC}\t"
+                echo -ne "${RED}FAIL${NC}\t"
             fi
             echo "$file"
         fi
@@ -36,6 +39,9 @@ function run_tests_in() {
 }
 
 run_tests_in "$good_tests_dir" 0
+run_tests_in "$objects_test_dir" 0
+run_tests_in "$objects_test_dir2" 0
+run_tests_in "$struct_test_dir" 0
 # run_tests_in "$bad_tests_dir" 1
 # run_tests_in "$extension_tests_dir" 0
 
