@@ -220,7 +220,6 @@ emmitExpr (EField e i) = do
   op <- ensureInAnyRegister op'
   case t of
     TypeClass tn -> do
-      op <- ensureInAnyRegister op'
       (offset, ftype) <- gets ((Map.! i) . fst . (Map.! tn) . _classes)
       return (Memory op $ Just offset, ftype)
     TypeArray _ -> return (Memory op Nothing, TypeInt)

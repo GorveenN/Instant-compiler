@@ -9,9 +9,10 @@ objects_test_dir="lattests/extensions/objects1/*"
 objects_test_dir2="lattests/extensions/objects2/*"
 struct_test_dir="lattests/extensions/struct/*"
 arrays_test_dir="lattests/extensions/arrays1/*"
+extensions="lattests/extensions/more_good/*"
 program_path="./latc"
 
-more_good_tests="my_tests/basic/*.lat"
+more_good_tests="lattests/basic/*.lat"
 more_bad_tests="my_tests/bad/*/*.lat"
 
 NC='\033[0m' # No Color
@@ -44,6 +45,7 @@ run_tests_in "$objects_test_dir" 0
 run_tests_in "$objects_test_dir2" 0
 run_tests_in "$struct_test_dir" 0
 run_tests_in "$arrays_test_dir" 0
+run_tests_in "$extensions" 0
 # run_tests_in "$bad_tests_dir" 1
 # run_tests_in "$extension_tests_dir" 0
 
