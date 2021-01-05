@@ -1,0 +1,8 @@
+int main(){
+    printInt(f()[5]); // 0
+    return 0;
+}
+
+int[] f(){
+    return new int[32];
+}
