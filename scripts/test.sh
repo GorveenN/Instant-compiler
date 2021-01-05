@@ -10,7 +10,7 @@ objects_test_dir2="lattests/extensions/objects2/*"
 struct_test_dir="lattests/extensions/struct/*"
 arrays_test_dir="lattests/extensions/arrays1/*"
 extensions="lattests/extensions/more_good/*"
-program_path="./latc"
+program_path="./latc_x86"
 
 more_good_tests="lattests/basic/*.lat"
 more_bad_tests="my_tests/bad/*/*.lat"

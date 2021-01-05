@@ -1,5 +1,5 @@
 all: src/main/Main.hs src/latte/*
-	stack build 
+	stack build
 	stack --local-bin-path . install
 
 gram: src/gram/Latte.cf
@@ -12,5 +12,5 @@ format:
 	bash scripts/format
 
 clean:
-	rm -rf .stack-work .build latc
+	rm -rf .stack-work .build latc_x86
 

@@ -39,7 +39,7 @@ run a = do
                 (Just x) -> x
                 Nothing -> dropExtension $ inp a
           let base = takeBaseName outname
-          let dots = (if asm a then outname else workdir ++ base) ++ ".s"
+          let dots = outname ++ ".s"
           let doto = workdir ++ base ++ ".o"
           let libo = workdir ++ "lib.o"
           callCommand $ "mkdir -p " ++ workdir
@@ -55,7 +55,6 @@ run a = do
 data Args = Args
   { output :: Maybe String,
     library :: String,
-    asm :: Bool,
     inp :: String
   }
   deriving (Show)
@@ -74,11 +73,6 @@ args =
       ( long "library"
           <> short 'l'
           <> value "./stdlib/runtime.c"
-      )
-    <*> switch
-      ( long "asm"
-          <> short 'a'
-          <> help "Whether to emmit asm file before compiling"
       )
     <*> strArgument (help "Latte program to compile")
 

@@ -20,10 +20,10 @@ dependencies:
 
 library:
   source-dirs:
-    - src/latte 
-    - src/parser 
+    - src/latte
+    - src/parser
 executables:
-  latc:
+  latc_x86:
     main:                Main.hs
     source-dirs:         src/main
     ghc-options:
