@@ -1,0 +1,24 @@
+class A {
+   B[] b;
+}
+
+class B {
+   C c;
+}
+
+class C {
+   int[] arr;
+}
+
+
+int main() {
+   A a = new A;
+   a.b = new B[2];
+   a.b[0] = new B;
+   a.b[0].c = new C;
+   a.b[0].c.arr = new int[2];
+   a.b[0].c.arr[0] = 3;
+
+   printInt(a.b[0].c.arr[0]);
+   return 0;
+}

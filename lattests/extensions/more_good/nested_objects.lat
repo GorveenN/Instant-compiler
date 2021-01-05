@@ -1,0 +1,25 @@
+int main () {
+        A a = new A;
+        a.b = new B;
+        a.b.j = 5;
+        a.printB(); # should print 5
+        a.set_b(new B);
+        a.printB(); # should print 0
+
+        return 0;
+}
+
+class A {
+        B b;
+        int i;
+        void set_b(B b) {
+                self.b = b;
+        }
+        void printB() {
+                printInt(b.j);
+        }
+}
+
+class B extends A {
+        int j;
+}
