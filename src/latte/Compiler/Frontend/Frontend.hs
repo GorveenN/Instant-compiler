@@ -442,22 +442,20 @@ checkExpr x = case x of
   ELitFalse _ -> return T.TypeBool
   EString _ _ -> return T.TypeStr
   EApp pos ident exprs -> do
-    a <- gets (Map.lookup ident . _allFuns)
-    (ttype, args) <- case a of
-      Just b -> return b
-      Nothing -> do
-        incls <- asks _inClass
-        case incls of
-          Just clsname -> do
-            ClassMeta {_methods = methods} <-
-              gets (Map.lookup clsname . _allClasses)
-                >>= lookupFail (FunctionNotInScope pos ident)
-            case Map.lookup ident methods of
-              Just b -> return b
-              Nothing -> throwError (FunctionNotInScope pos ident)
-          Nothing -> throwError (FunctionNotInScope pos ident)
-    throwIfArgumentsMismatch pos (map fst args) exprs
-    return ttype
+    incls <- asks _inClass
+    case incls of
+      Just clsname -> do
+        ClassMeta {_methods = methods} <- gets ((Map.! clsname) . _allClasses)
+        case Map.lookup ident methods of
+          (Just (b, _)) -> return b
+          Nothing ->
+            gets (Map.lookup ident . _allFuns)
+              >>= lookupFail (FunctionNotInScope pos ident)
+              >>= (return . fst)
+      Nothing ->
+        gets (Map.lookup ident . _allFuns)
+          >>= lookupFail (FunctionNotInScope pos ident)
+          >>= (return . fst)
   EAccess pos indexed index -> do
     throwIfWrongType index T.TypeInt
     arrType <- checkExpr indexed
