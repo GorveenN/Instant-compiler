@@ -22,12 +22,21 @@ GREEN='\033[0;32m'
 function run_tests_in() {
     for file in $1; do
         if [[ "$file" == *".lat" ]]; then
+            echo $file
             basename="$(echo $file | cut -f1 -d".")"
             $program_path $file 2>/dev/null
             if [ -f "$basename.input" ]; then
-                ./$basename <"$basename.input" | diff "$basename.output" -
+                if [ -f "$basename.output" ]; then
+                    ./$basename <"$basename.input" | diff "$basename.output" -
+                else
+                    ./$basename <"$basename.input"
+                fi
             else
-                ./$basename | diff "$basename.output" -
+                if [ -f "$basename.output" ]; then
+                    ./$basename | diff "$basename.output" -
+                else
+                    ./$basename
+                fi
             fi
 
             if [ "$?" -eq $2 ]; then
@@ -46,6 +55,7 @@ run_tests_in "$objects_test_dir2" 0
 run_tests_in "$struct_test_dir" 0
 run_tests_in "$arrays_test_dir" 0
 run_tests_in "$extensions" 0
+run_tests_in "lattests/others/*" 0
 # run_tests_in "$bad_tests_dir" 1
 # run_tests_in "$extension_tests_dir" 0
 

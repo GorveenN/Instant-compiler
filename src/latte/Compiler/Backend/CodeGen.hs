@@ -108,9 +108,9 @@ instance Show Instruction where
   show (MOV o1 o2) = "movl " ++ show o1 ++ ", " ++ show o2
   show (ADD o1 o2) = "addl " ++ show o1 ++ ", " ++ show o2
   show (SUB o1 o2) = "subl " ++ show o1 ++ ", " ++ show o2
-  show (POP o) = "pop " ++ show o
+  show (POP o) = "popl " ++ show o
   show (CMP o1 o2) = "cmp " ++ show o1 ++ ", " ++ show o2
-  show (PUSH o) = "push " ++ show o
+  show (PUSH o) = "pushl " ++ show o
   show (JMP l) = "jmp " ++ l
   show (JE l) = "je " ++ l
   show (JG l) = "jg " ++ l

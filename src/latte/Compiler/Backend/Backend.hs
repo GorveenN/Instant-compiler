@@ -204,7 +204,7 @@ emmitExpr (ENewArray t e) = do
       push_ $ Label l
     _ -> push_ $ Const 0
   push_ eax_
-  call_ $ Label "memset"
+  call_ $ Label "__memset"
   -- len of array + 4
   mov_ (Memory ESP $ Just 12) eax_
   mov_ (Memory ESP Nothing) edx_
