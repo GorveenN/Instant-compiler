@@ -91,7 +91,12 @@ throwIfWrongType :: Show a => Expr a -> T.Type -> SRE a T.Type
 throwIfWrongType expr ttype = do
   t <- checkExpr expr
   inh <- t `superclass` ttype
-  unless (t == ttype || inh) $ throwError $ TypeMismatch (exprPosition expr) ttype t
+  unless (t == ttype || inh) $
+    throwError $
+      TypeMismatch
+        (exprPosition expr)
+        ttype
+        t
   return t
 
 throwIfTypeNotDefined :: Show a => a -> T.Type -> SRE a ()
