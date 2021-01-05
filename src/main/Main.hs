@@ -44,13 +44,14 @@ run a = do
           let libo = workdir ++ "lib.o"
           callCommand $ "mkdir -p " ++ workdir
           writeFile dots $ unlines $ cumpile $ transProgram tree
-          callCommand $ "gcc -g -m32 -o " ++ libo ++ " -c " ++ library a
-          callCommand $ "gcc -g -m32 -o " ++ doto ++ " -c " ++ dots
-          callCommand $ "gcc -g -m32 -o " ++ outname ++ " " ++ doto ++ " " ++ libo
+          callCommand $ "gcc -g -m32 -o " ++ libo ++ " -c " ++ library a ++ redirect
+          callCommand $ "gcc -g -m32 -o " ++ doto ++ " -c " ++ dots ++ redirect
+          callCommand $ "gcc -g -m32 -o " ++ outname ++ " " ++ doto ++ " " ++ libo ++ redirect
           hPutStrLn stderr "Ok"
           exitSuccess
   where
     workdir = ".latcwork/"
+    redirect = " 1>/dev/null 2>&1"
 
 data Args = Args
   { output :: Maybe String,

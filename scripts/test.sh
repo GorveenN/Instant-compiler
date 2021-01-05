@@ -22,7 +22,6 @@ GREEN='\033[0;32m'
 function run_tests_in() {
     for file in $1; do
         if [[ "$file" == *".lat" ]]; then
-            echo $file
             basename="$(echo $file | cut -f1 -d".")"
             $program_path $file 2>/dev/null
             if [ -f "$basename.input" ]; then
