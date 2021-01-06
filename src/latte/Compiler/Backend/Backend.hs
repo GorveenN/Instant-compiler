@@ -34,6 +34,7 @@ import Control.Monad.State
 import Control.Monad.Writer
   ( Writer,
     WriterT,
+    censor,
     execWriter,
     execWriterT,
     runWriter,
@@ -42,6 +43,7 @@ import Control.Monad.Writer
 import Data.List (sortBy)
 import qualified Data.Map as Map
 import Data.Maybe
+import qualified Data.Set as Set
 import Debug.Trace
 import System.IO
 
@@ -270,27 +272,26 @@ emmitExpr (EArithm e1 op e2) = case op of
     return (eax_, TypeInt)
   where
     addsub ctr e1 e2 = do
-      push_ . fst =<< emmitExpr e2
+      op2 <- pushIfNeeded . fst =<< emmitExpr e2
       (op1, t) <- emmitExpr e1 >>= moveToRegisterType eax_
       case t of
         TypeStr -> do
+          -- op2 will be already pushed
           push_ op1
           call_ $ Label fConcatString
           add_ (Const 8) esp_
           return (eax_, TypeStr)
         _ -> do
-          let op2 = edx_
-          pop_ op2
-          ctr op2 op1
+          op2' <- popIfNeeded op2 edx_
+          ctr op2' op1
           return (op1, TypeInt)
 
     basediv e1 e2 = do
-      push_ . fst =<< emmitExpr e2
+      op2 <- pushIfNeeded . fst =<< emmitExpr e2
       op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
       when (op1 /= eax_) (mov_ op1 eax_)
       cdq_
-      let divisor = ecx_
-      pop_ divisor
+      divisor <- popIfNeeded op2 ecx_
       -- division result stays in eax
       idiv_ divisor
 emmitExpr e@ELogic {} = do
@@ -308,20 +309,67 @@ emmitLogic (ELogic e1 op e2) ltrue lfalse = case op of
   EQU -> cmpjmp je_ jne_ ltrue lfalse e1 e2
   NE -> cmpjmp jne_ je_ ltrue lfalse e1 e2
   AND -> do
-    emmitLogic e1 Nothing lfalse
+    [secondBranch] <- makeNLabels 1
+    censor (deleteDeadJumps secondBranch) $
+      emmitLogic e1 (Just secondBranch) lfalse
+    unless (isSimpleLogic e1) $ label_ secondBranch
     emmitLogic e2 ltrue lfalse
   OR -> do
-    emmitLogic e1 ltrue Nothing
+    [secondBranch] <- makeNLabels 1
+    censor (deleteDeadJumps secondBranch) $
+      emmitLogic e1 ltrue $
+        Just
+          secondBranch
+    unless (isSimpleLogic e1) $ label_ secondBranch
     emmitLogic e2 ltrue lfalse
 emmitLogic (Not e) ltrue lfalse = emmitLogic e lfalse ltrue
 emmitLogic e ltrue lfalse = emmitLogic (ELogic e EQU (ELitInt 1)) ltrue lfalse
 
+isSimpleLogic :: Expr -> Bool
+isSimpleLogic (ELogic e1 op e2) = case op of
+  LTH -> True
+  LE -> True
+  GTH -> True
+  GE -> True
+  EQU -> True
+  NE -> True
+  _ -> False
+
+deleteDeadJumps ::
+  Label ->
+  ([Instruction], [StringLiteral], [VTable]) ->
+  ([Instruction], [StringLiteral], [VTable])
+deleteDeadJumps label (instr, s, v) =
+  (reverse $ _deleteDeadJumps label (reverse instr), s, v)
+  where
+    _deleteDeadJumps :: Label -> [Instruction] -> [Instruction]
+    _deleteDeadJumps label instr = case instr of
+      i@(JE label2) : rest -> helper i label label2 rest
+      i@(JG label2) : rest -> helper i label label2 rest
+      i@(JGE label2) : rest -> helper i label label2 rest
+      i@(JL label2) : rest -> helper i label label2 rest
+      i@(JLE label2) : rest -> helper i label label2 rest
+      i@(JNE label2) : rest -> helper i label label2 rest
+      rest -> rest
+    helper i l1 l2 rest = if l1 == l2 then rest else i : _deleteDeadJumps l1 rest
+
+pushIfNeeded :: Operand -> CodeGen Operand
+pushIfNeeded a@(Const _) = return a
+pushIfNeeded a = do
+  push_ a
+  return a
+
+popIfNeeded :: Operand -> Operand -> CodeGen Operand
+popIfNeeded a@(Const _) o = return a
+popIfNeeded a o = do
+  pop_ o
+  return o
+
 cmpjmp instr1 instr2 label1 label2 e1 e2 = do
-  push_ . fst =<< emmitExpr e2
+  op2 <- pushIfNeeded . fst =<< emmitExpr e2
   op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
-  let op2 = edx_
-  pop_ op2
-  cmp_ op2 op1
+  op2' <- popIfNeeded op2 edx_
+  cmp_ op2' op1
   jmpIfJust instr1 label1
   jmpIfJust instr2 label2
 
@@ -335,7 +383,6 @@ emmitBoolEpilogue tlabel flabel endlabel = do
   jmp_ endlabel
   label_ flabel
   mov_ (Const 0) eax_
-  jmp_ endlabel
   label_ endlabel
   return eax_
 
@@ -381,7 +428,7 @@ emmitStmt (Block ss) = do
 emmitStmt (Ass e1 e2) = do
   e2' <- fst <$> emmitExpr e2
   case e2' of
-    c@(Const _) -> do
+    c@(Const _) ->
       emmitExpr e1 >>= mov_ c . fst
     _ -> do
       push_ e2'
@@ -394,13 +441,13 @@ emmitStmt (Ret e) = do
 emmitStmt VRet = leave_ >> ret_
 emmitStmt (Cond e s) = do
   [tlabel, flabel] <- makeNLabels 2
-  emmitLogic e (Just tlabel) (Just flabel)
+  censor (deleteDeadJumps tlabel) $ emmitLogic e (Just tlabel) (Just flabel)
   label_ tlabel
   emmitStmt s
   label_ flabel
 emmitStmt (CondElse e s1 s2) = do
   [tlabel, flabel, endlabel] <- makeNLabels 3
-  emmitLogic e (Just tlabel) (Just flabel)
+  censor (deleteDeadJumps tlabel) $ emmitLogic e (Just tlabel) (Just flabel)
   label_ tlabel
   emmitStmt s1
   jmp_ endlabel
@@ -410,7 +457,7 @@ emmitStmt (CondElse e s1 s2) = do
 emmitStmt (While e s) = do
   [tlabel, flabel, condlabel] <- makeNLabels 3
   label_ condlabel
-  emmitLogic e (Just tlabel) (Just flabel)
+  censor (deleteDeadJumps tlabel) $ emmitLogic e (Just tlabel) (Just flabel)
   label_ tlabel
   emmitStmt s
   jmp_ condlabel
@@ -481,7 +528,7 @@ emmitClassMethods = mapM_ emmitMethods
     emmitMethods :: ClassDef -> CodeGen ()
     emmitMethods cls = mapM_ (emmitMethod (getClassname cls)) (getMethods cls)
     emmitMethod :: Id -> FnDef -> CodeGen ()
-    emmitMethod clsn (FnDef t funn args body) = do
+    emmitMethod clsn (FnDef t funn args body) =
       local (over inclass $ const (Just clsn)) $
         emmitFnDef
           ( FnDef
@@ -587,13 +634,6 @@ emmitClassConstructor n v s = do
   return ()
   where
     emmitTypedId :: Operand -> TypedId -> CodeGen ()
-    -- emmitTypedId o (TypedId TypeInt _) = mov_ (Const 0) o
-    -- emmitTypedId o (TypedId TypeBool _) = mov_ (Const 0) o
-    -- emmitTypedId o (TypedId TypeStr _) = do
-    --   l <- insertString ""
-    --   mov_ (Label l) o
-    -- emmitTypedId o (TypedId (TypeClass n) _) = mov_ (Const 0) o
-    -- emmitTypedId o (TypedId (TypeArray _) _) = mov_ (Const 0) o
     emmitTypedId o (TypedId TypeStr _) = do
       l <- insertString ""
       mov_ (Label l) o
@@ -644,8 +684,8 @@ makeLabel = do
   modify (over labelCounter (+ 1))
   return $ "__label__" ++ show a
 
-cumpile :: Program -> [String]
-cumpile program = ".data" : strings ++ vtable ++ textPrologue ++ instrs
+compile :: Program -> [String]
+compile program = ".data" : strings ++ vtable ++ textPrologue ++ instrs
   where
     (instrs', strings', vtable') = runCodeGen program
     strings = map show strings'
