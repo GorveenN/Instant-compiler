@@ -365,7 +365,10 @@ checkStmt x = case x of
   While _ expr stmt -> do
     throwIfWrongType expr T.TypeBool
     checkStmt stmt
-    return False
+    e <- constExpr expr
+    case e of
+      Just (ConstBool True) -> return True
+      _ -> return False
   For pos nonvoidtype ident expr stmt -> do
     typet <- checkNonVoidType nonvoidtype
     exprt <- checkExpr expr
