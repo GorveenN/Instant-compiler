@@ -398,7 +398,7 @@ addVar n t o = do
 
 emmitStmt :: Stmt -> CodeGen ()
 emmitStmt (Block ss) = do
-  censor mergeLabels $ emmitStmtList ss
+  emmitStmtList ss
   let nd = numDecl ss
   when (nd /= 0 && not (isRetBlock ss)) (add_ (Const $ nd * 4) esp_)
   where
@@ -406,6 +406,10 @@ emmitStmt (Block ss) = do
     emmitStmtList ((Decl t n e) : ss) = do
       f <- emmitExpr e >>= (addVar n t . fst)
       local f (emmitStmtList ss)
+    emmitStmtList (e@(Ret _) : _) = do
+      emmitStmt e
+    emmitStmtList (e@VRet : _) = do
+      emmitStmt e
     emmitStmtList (s : ss) = do
       emmitStmt s
       emmitStmtList ss
@@ -512,8 +516,7 @@ emmitProgram (Program defs) = do
   let f = compose $ map (\(FnDef t n _ _) -> Map.insert n t) functions
   modify (over funs f)
   emmitClasses classes
-  -- mapM_ (censor mergeLabels . emmitFnDef) functions
-  mapM_ emmitFnDef functions
+  mapM_ (censor deleteLabelAfterRet . emmitFnDef) functions
   where
     isFun TopFnDef {} = True
     isFun _ = False
@@ -690,26 +693,23 @@ compile program = ".data" : strings ++ vtable ++ textPrologue ++ instrs
     (instrs', strings', vtable') = runCodeGen program
     strings = map show strings'
     instrs = map show instrs'
-    -- instrs = map show instrs'
     vtable = map show vtable'
     textPrologue = [".text", ".globl main"]
 
-mergeLabels ::
+deleteLabelAfterRet ::
   ([Instruction], [StringLiteral], [VTable]) ->
   ([Instruction], [StringLiteral], [VTable])
-mergeLabels (instr, s, v) = (reverse $ _mergeLabels $ reverse instr, s, v)
+deleteLabelAfterRet (instr, s, v) =
+  (reverse $ _deleteLabelAfterRet $ reverse instr, s, v)
   where
-    _mergeLabels :: [Instruction] -> [Instruction]
-    _mergeLabels instr =
+    _deleteLabelAfterRet :: [Instruction] -> [Instruction]
+    _deleteLabelAfterRet instr =
       let (dead, rest) = _filterBeg ([], instr)
-       in reverse $ fst' $ foldl _folder ([], Set.fromList dead, Nothing, Map.empty) rest
-
-    fst' (k, _, _, _) = k
+       in reverse $ fst $ foldl _folder ([], Set.fromList dead) rest
 
     _filterBeg (s, a@(LABEL l) : rest) = _filterBeg (l : s, rest)
     _filterBeg (s, rest) = (s, rest)
 
-    _folder :: FoldType -> Instruction -> FoldType
     _folder acc (JMP l) = _folderJmp JMP l acc
     _folder acc (JE l) = _folderJmp JE l acc
     _folder acc (JG l) = _folderJmp JG l acc
@@ -717,24 +717,10 @@ mergeLabels (instr, s, v) = (reverse $ _mergeLabels $ reverse instr, s, v)
     _folder acc (JL l) = _folderJmp JL l acc
     _folder acc (JLE l) = _folderJmp JLE l acc
     _folder acc (JNE l) = _folderJmp JNE l acc
-    _folder (acc, dead, last, mapping) a@(LABEL l) = case last of
-      Just last' -> (acc, dead, last, Map.insert l last' mapping)
-      Nothing -> (a : acc, dead, Just l, mapping)
-    _folder (acc, dead, last, mapping) x = (x : acc, dead, Nothing, mapping)
+    _folder (acc, dead) x = (x : acc, dead)
 
-    _folderJmp :: (Label -> Instruction) -> Label -> FoldType -> FoldType
-    _folderJmp jmp label (acc, dead, last, mapping) =
-      ( if Set.member label dead
-          then acc
-          else case Map.lookup label mapping of
-            Just l -> jmp l : acc
-            Nothing -> jmp label : acc,
-        dead,
-        Nothing,
-        mapping
-      )
-
-type FoldType = ([Instruction], Set.Set Label, Maybe Label, Map.Map Label Label)
+    _folderJmp jmp label (acc, dead) =
+      (if Set.member label dead then acc else jmp label : acc, dead)
 
 fConcatString :: String
 fConcatString = "__concat_string"

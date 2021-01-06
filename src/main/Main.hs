@@ -2,7 +2,7 @@
 
 module Main where
 
-import Compiler.Backend.Backend (cumpile)
+import Compiler.Backend.Backend (compile)
 import Compiler.Backend.Tree (transProgram)
 import Compiler.Frontend.Frontend (runSRE)
 import Control.Monad (when)
