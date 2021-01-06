@@ -19,7 +19,7 @@ Program kompilujemy przy użyciu polecenia `make`.
 
 
 ## Struktura
-- src/main - pliki main
+- src/main - plik main
 - src/latte/Frontend - implementacja frontendu
 - src/latte/Backend - implementacja backendu
 - src/parser - pliki parsera
