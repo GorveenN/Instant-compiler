@@ -398,7 +398,7 @@ addVar n t o = do
 
 emmitStmt :: Stmt -> CodeGen ()
 emmitStmt (Block ss) = do
-  emmitStmtList ss
+  censor mergeLabels $ emmitStmtList ss
   let nd = numDecl ss
   when (nd /= 0 && not (isRetBlock ss)) (add_ (Const $ nd * 4) esp_)
   where
@@ -428,8 +428,7 @@ emmitStmt (Block ss) = do
 emmitStmt (Ass e1 e2) = do
   e2' <- fst <$> emmitExpr e2
   case e2' of
-    c@(Const _) ->
-      emmitExpr e1 >>= mov_ c . fst
+    c@(Const _) -> emmitExpr e1 >>= mov_ c . fst
     _ -> do
       push_ e2'
       emmitExpr e1 >>= pop_ . fst
@@ -513,6 +512,7 @@ emmitProgram (Program defs) = do
   let f = compose $ map (\(FnDef t n _ _) -> Map.insert n t) functions
   modify (over funs f)
   emmitClasses classes
+  -- mapM_ (censor mergeLabels . emmitFnDef) functions
   mapM_ emmitFnDef functions
   where
     isFun TopFnDef {} = True
@@ -690,8 +690,51 @@ compile program = ".data" : strings ++ vtable ++ textPrologue ++ instrs
     (instrs', strings', vtable') = runCodeGen program
     strings = map show strings'
     instrs = map show instrs'
+    -- instrs = map show instrs'
     vtable = map show vtable'
     textPrologue = [".text", ".globl main"]
+
+mergeLabels ::
+  ([Instruction], [StringLiteral], [VTable]) ->
+  ([Instruction], [StringLiteral], [VTable])
+mergeLabels (instr, s, v) = (reverse $ _mergeLabels $ reverse instr, s, v)
+  where
+    _mergeLabels :: [Instruction] -> [Instruction]
+    _mergeLabels instr =
+      let (dead, rest) = _filterBeg ([], instr)
+       in reverse $ fst' $ foldl _folder ([], Set.fromList dead, Nothing, Map.empty) rest
+
+    fst' (k, _, _, _) = k
+
+    _filterBeg (s, a@(LABEL l) : rest) = _filterBeg (l : s, rest)
+    _filterBeg (s, rest) = (s, rest)
+
+    _folder :: FoldType -> Instruction -> FoldType
+    _folder acc (JMP l) = _folderJmp JMP l acc
+    _folder acc (JE l) = _folderJmp JE l acc
+    _folder acc (JG l) = _folderJmp JG l acc
+    _folder acc (JGE l) = _folderJmp JGE l acc
+    _folder acc (JL l) = _folderJmp JL l acc
+    _folder acc (JLE l) = _folderJmp JLE l acc
+    _folder acc (JNE l) = _folderJmp JNE l acc
+    _folder (acc, dead, last, mapping) a@(LABEL l) = case last of
+      Just last' -> (acc, dead, last, Map.insert l last' mapping)
+      Nothing -> (a : acc, dead, Just l, mapping)
+    _folder (acc, dead, last, mapping) x = (x : acc, dead, Nothing, mapping)
+
+    _folderJmp :: (Label -> Instruction) -> Label -> FoldType -> FoldType
+    _folderJmp jmp label (acc, dead, last, mapping) =
+      ( if Set.member label dead
+          then acc
+          else case Map.lookup label mapping of
+            Just l -> jmp l : acc
+            Nothing -> jmp label : acc,
+        dead,
+        Nothing,
+        mapping
+      )
+
+type FoldType = ([Instruction], Set.Set Label, Maybe Label, Map.Map Label Label)
 
 fConcatString :: String
 fConcatString = "__concat_string"
