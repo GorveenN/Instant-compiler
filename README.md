@@ -19,13 +19,14 @@ Program kompilujemy przy użyciu polecenia `make`.
 
 
 ## Struktura
-- src/main - plik main
-- src/latte/Frontend - implementacja frontendu
-- src/latte/Backend - implementacja backendu
-- src/parser - pliki parsera
+- `src/main` - plik main
+- `src/latte/Frontend` - implementacja frontendu
+- `src/latte/Backend` - implementacja backendu
+- `src/parser` - pliki parsera
 
 ## Składnia
 Składnia rzutowania ma postać `"null" "as" Typ`, przykładowo `null as list`, gdzie `list` jest obiektem.
+Testy pasujące do tej składni znajdują się w katalogu `lattests`.
 
 ## Zaimplementowane rozszerzenia
 - struktury
