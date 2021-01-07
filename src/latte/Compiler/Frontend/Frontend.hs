@@ -446,19 +446,19 @@ checkExpr x = case x of
   EString _ _ -> return T.TypeStr
   EApp pos ident exprs -> do
     incls <- asks _inClass
-    case incls of
+    (ttype, args) <- case incls of
       Just clsname -> do
         ClassMeta {_methods = methods} <- gets ((Map.! clsname) . _allClasses)
         case Map.lookup ident methods of
-          (Just (b, _)) -> return b
+          (Just a) -> return a
           Nothing ->
             gets (Map.lookup ident . _allFuns)
               >>= lookupFail (FunctionNotInScope pos ident)
-              >>= (return . fst)
       Nothing ->
         gets (Map.lookup ident . _allFuns)
           >>= lookupFail (FunctionNotInScope pos ident)
-          >>= (return . fst)
+    throwIfArgumentsMismatch pos (map fst args) exprs
+    return ttype
   EAccess pos indexed index -> do
     throwIfWrongType index T.TypeInt
     arrType <- checkExpr indexed
