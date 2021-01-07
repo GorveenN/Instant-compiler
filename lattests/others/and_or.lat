@@ -1,0 +1,15 @@
+int f(int a, int b) {
+  if ((a > 0 && b > 0) || (a < 0 && b < 0)) {
+    return 7;
+  } else {
+    return 42;
+  }
+}
+
+int main() {
+  printInt(f(1, -1));  // 42
+  printInt(f(-1, 1));  // 42
+  printInt(f(1, 1));   // 7
+  printInt(f(-1, -1)); // 7
+  return 0;
+}
