@@ -337,6 +337,7 @@ isSimpleLogic (ELogic e1 op e2) = case op of
   EQU -> True
   NE -> True
   _ -> False
+isSimpleLogic _ = False
 
 deleteDeadJumps ::
   Label ->
