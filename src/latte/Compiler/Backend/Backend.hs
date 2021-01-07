@@ -291,7 +291,10 @@ emmitExpr (EArithm e1 op e2) = case op of
       op1 <- emmitExpr e1 >>= immediateToOperand eax_ . fst
       when (op1 /= eax_) (mov_ op1 eax_)
       cdq_
-      divisor <- popIfNeeded op2 ecx_
+      let divisor = ecx_
+      case op2 of
+        c@(Const x) -> mov_ c divisor
+        _ -> pop_ divisor
       -- division result stays in eax
       idiv_ divisor
 emmitExpr e@ELogic {} = do
